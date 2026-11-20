@@ -1543,11 +1543,25 @@ TEMPLATE = """<!doctype html>
 body {{ margin:0; padding:20px 16px 40px; background:var(--bg); color:var(--text);
   font:14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
 body.has-sel {{ padding-bottom:88px }}
-main {{ max-width:1280px; margin:0 auto }}
+main {{ max-width:1280px; margin:0 auto }}   /* centred in the space right of the rail */
+/* Left rail, identical on the Tasks and Notes pages (static/notes/notes.css): title, tab
+   switcher, Pull / Update, then the page's own navigator. Fixed, so switching tabs
+   never moves it. */
+:root {{ --rail-w:232px; --rail-gap:16px }}
+body {{ padding-left:calc(var(--rail-w) + 2 * var(--rail-gap) + 4px) }}
+.rail {{ position:fixed; left:var(--rail-gap); top:var(--rail-gap); bottom:var(--rail-gap); width:var(--rail-w);
+  display:flex; flex-direction:column; gap:10px; z-index:6; box-sizing:border-box }}
+.rail-head {{ display:flex; flex-direction:column; gap:8px; flex:none }}
+.rail-head h1 {{ font-size:1.2rem; line-height:1.25; margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }}
+.rail .tabs {{ display:flex; margin:0 }} .rail .tabs a {{ flex:1; text-align:center }}
+.rail-acts {{ display:flex; gap:6px }} .rail-acts > button {{ flex:1; margin:0 }}
+@media (max-width:900px) {{
+  body {{ padding-left:16px }}
+  .rail {{ position:static; width:auto; margin-bottom:12px }}
+}}
 h1 {{ font-size:1.4rem; margin:0 }}
 .top {{ display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px }}
-.tabs {{ display:flex; gap:2px; background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:2px;
-  margin-right:auto; align-self:center }}
+.tabs {{ display:flex; gap:2px; background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:2px }}
 .tabs a {{ padding:3px 12px; border-radius:6px; color:var(--muted); text-decoration:none; font-weight:600; font-size:13px }}
 .tabs a.on {{ background:var(--card); color:var(--text); box-shadow:0 1px 3px rgba(0,0,0,.15) }}
 .gen, .meta {{ color:var(--muted); font-size:12px }}
@@ -1648,15 +1662,11 @@ a.src {{ font-size:12px }}
 .blurb a {{ overflow-wrap:anywhere }}
 @media (max-width:400px) {{ .cards {{ grid-template-columns:1fr }} }}
 [hidden] {{ display:none !important }}
-/* Page = content + a sticky filter sidebar on the right (beside the lists, never over them).
-   Sidebar: one block per domain, coloured header row, its projects indented on a coloured rule. */
-.layout {{ display:grid; grid-template-columns:minmax(0, 1fr) 232px; gap:20px; max-width:1540px;
-  margin:0 auto; align-items:start }}
-.layout > main {{ max-width:none; margin:0; min-width:0 }}
-.side {{ position:sticky; top:12px }}
+/* Filter: the rail's navigator. One block per domain, coloured header row, its projects
+   indented on a coloured rule. */
 .filt {{ display:flex; flex-direction:column; gap:10px; font-size:12px; color:var(--text);
   background:var(--card); border:1px solid var(--border); border-radius:10px; padding:10px;
-  box-shadow:0 2px 10px rgba(0,0,0,.12); max-height:calc(100vh - 24px); overflow:auto; box-sizing:border-box }}
+  box-shadow:0 2px 10px rgba(0,0,0,.12); flex:1 1 auto; min-height:0; overflow:auto; box-sizing:border-box }}
 .filt-head {{ display:flex; align-items:center; gap:8px; flex-wrap:wrap }}
 .filt-label {{ color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em }}
 .filt-hint {{ color:var(--muted); font-size:10.5px; flex-basis:100%; line-height:1.3 }}
@@ -1674,8 +1684,6 @@ a.src {{ font-size:12px }}
 .filt label:hover {{ opacity:1 }} .filt-proj:hover {{ color:var(--c) }}
 .filt label.solo {{ outline:2px solid var(--accent); outline-offset:1px; border-radius:6px; opacity:1 }}
 @media (max-width:900px) {{
-  .layout {{ grid-template-columns:minmax(0, 1fr) }}
-  .side {{ position:static; order:-1 }}
   .filt {{ max-height:none; box-shadow:none }}
   .filt-table {{ flex-direction:row; flex-wrap:wrap; gap:10px 18px }}
 }}
@@ -1772,10 +1780,13 @@ body.has-sel .toasts {{ bottom:96px }}
   border-radius:6px; background:var(--bg); color:var(--text) }}
 .cal-now::before {{ content:""; position:absolute; left:0; top:-3px; width:8px; height:8px; border-radius:50%; background:var(--red) }}
 </style></head>
-<body><div class="layout"><main>
-<div class="top"><h1>{brand}</h1>
+<body>
+<aside class="rail"><div class="rail-head"><h1 class="brand">{brand}</h1>
 <nav class="tabs"><a class="on" href="/">Tasks</a><a href="/notes">Notes</a></nav>
-<span class="gen">generated {generated}</span></div>
+<div class="rail-acts" id="railActs"></div></div>
+{filt}</aside>
+<main>
+<div class="top"><span class="gen">generated {generated}</span></div>
 {headline}
 <div class="boxes" id="review">{review}</div>
 <div class="today" id="tasks">{boxes}</div>
@@ -1784,7 +1795,6 @@ body.has-sel .toasts {{ bottom:96px }}
 <div class="boxes" id="more">{more}</div>
 <div class="proj-section"><h2>Projects <span class="n">{nproj} active</span></h2><div class="cards" id="cards">{cards}</div></div>
 </main>
-<aside class="side">{filt}</aside></div>
 <script>
 (() => {{
   const KEY = "dashboard-filter-v2";
@@ -2527,7 +2537,7 @@ LIVE_JS = r"""<div class="toasts"></div>
   const pb = document.createElement("button");
   pb.className = "pullbtn"; pb.textContent = "↻ Pull";
   pb.title = "git pull the vault, then re-read tasks from disk";
-  $(".top h1").after(pb);
+  $("#railActs").append(pb);
   pb.onclick = () => pullRefresh();
 
   // ---- Update: pull vault, recollect, minimal stubs, re-render (no LLM)
@@ -3998,7 +4008,7 @@ class Handler(BaseHTTPRequestHandler):
                 root = notes_root(vault)
                 return self.send(200, {"projects": notes_projects(vault), "conflicts": _notes_conflicts,
                                        "dirty": bool(dirty_notes(vault)), "root": str(root),
-                                       "repo_ok": (root / ".git").exists()})
+                                       "repo_ok": (root / ".git").exists(), "brand": DASHBOARD_BRAND})
             if path == "/notes/api/note":
                 return self.send(200, note_read(vault, q.get("key", ""), q.get("name", "")))
             if path == "/notes/api/tasks":

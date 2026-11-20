@@ -46,6 +46,7 @@
   async function loadList() {
     const j = await api("/notes/api/list");
     projects = j.projects;
+    if (j.brand) { $("#brand").textContent = j.brand; if (!cur) document.title = "Notes · " + j.brand; }
     if (!j.repo_ok) toast("Notes repo not found at " + j.root + " — clone your notes repo there");
     if (j.dirty) { unsynced = true; scheduleSync(); }
     showConflicts(j.conflicts);
@@ -385,6 +386,45 @@
   }
   $("#tasksBtn").onclick = () => setTasks($("#tasks").hidden);
   setTasks(load(TASKS_KEY, false));
+
+  // ---------------------------------------------------------------- Pull / Update (rail)
+  // Pull: save open edits, then pull + push the notes repo, and pick up what came in.
+  // Update: the same, then the dashboard's full refresh (vault pull, projects, GitHub).
+  const pullBtn = $("#pullBtn"), updBtn = $("#updBtn");
+  async function pullNotes() {
+    await flush(false);
+    const j = await api("/notes/api/sync", {});
+    unsynced = !!j.dirty;
+    if (j.warn) toast(j.warn);
+    if (j.conflicts && j.conflicts.length) showConflicts(j.conflicts);
+    await loadList();
+    if (cur) await reloadIfChanged();
+    refreshState();
+  }
+  pullBtn.onclick = async () => {
+    pullBtn.disabled = true; pullBtn.textContent = "Pulling…";
+    try { await pullNotes(); toast("Notes pulled"); }
+    catch (e) { toast("Pull failed: " + e.message); }
+    finally { pullBtn.disabled = false; pullBtn.textContent = "↻ Pull"; }
+  };
+  updBtn.onclick = async () => {
+    updBtn.disabled = true; updBtn.textContent = "Updating…";
+    try {
+      await pullNotes();
+      await api("/update", {});
+      let j = {};
+      for (let i = 0; i < 150; i++) {          // up to ~5 min
+        await new Promise(r => setTimeout(r, 2000));
+        j = await api("/update");
+        if (j.status === "done" || j.status === "error") break;
+      }
+      await loadList();
+      if (cur) loadTasks();
+      toast(j.status === "error" ? "Update failed: " + (j.summary || j.error || "see the Tasks page")
+                                 : "Updated: vault, projects and GitHub activity");
+    } catch (e) { toast("Update failed: " + e.message); }
+    finally { updBtn.disabled = false; updBtn.textContent = "↻ Update"; }
+  };
 
   // ---------------------------------------------------------------- routing
   function fromHash() {

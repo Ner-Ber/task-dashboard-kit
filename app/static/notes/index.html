@@ -8,8 +8,21 @@
 <link rel="stylesheet" href="/static/notes/notes.css">
 </head>
 <body>
+<aside class="rail">
+  <div class="rail-head">
+    <h1 class="brand" id="brand">Tasks</h1>
+    <nav class="tabs"><a href="/">Tasks</a><a class="on" href="/notes">Notes</a></nav>
+    <div class="rail-acts">
+      <button type="button" class="pullbtn" id="pullBtn" title="Save open edits, then pull / push the notes repo">↻ Pull</button>
+      <button type="button" class="updbtn" id="updBtn" title="Full refresh: pull vault + notes, re-read projects and GitHub activity (no Claude)">↻ Update</button>
+    </div>
+  </div>
+  <div class="side" id="side">
+    <input type="search" id="find" placeholder="Find a note…" aria-label="Find a note">
+    <div id="tree" class="tree"></div>
+  </div>
+</aside>
 <header class="bar">
-  <nav class="tabs"><a href="/">Tasks</a><a class="on" href="/notes">Notes</a></nav>
   <div class="crumb" id="crumb"><span class="muted">Pick a note on the left</span></div>
   <span class="state" id="state" data-s="idle"></span>
   <div class="tools">
@@ -24,10 +37,6 @@
 </header>
 <div class="banner" id="banner" hidden></div>
 <div class="shell">
-  <aside class="side" id="side">
-    <input type="search" id="find" placeholder="Find a note…" aria-label="Find a note">
-    <div id="tree" class="tree"></div>
-  </aside>
   <main class="main" id="main" data-mode="split">
     <div class="empty" id="empty">
       <p>Notes live in the private repo <code>notes</code>, one folder per project
