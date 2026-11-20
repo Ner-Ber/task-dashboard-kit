@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Notes · Tasks</title>
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="/static/notes/notes.css">
+</head>
+<body>
+<header class="bar">
+  <nav class="tabs"><a href="/">Tasks</a><a class="on" href="/notes">Notes</a></nav>
+  <div class="crumb" id="crumb"><span class="muted">Pick a note on the left</span></div>
+  <span class="state" id="state" data-s="idle"></span>
+  <div class="tools">
+    <div class="seg" id="mode" role="group" aria-label="View">
+      <button type="button" data-m="edit" title="Editor only">Edit</button>
+      <button type="button" data-m="split" title="Editor and preview side by side">Split</button>
+      <button type="button" data-m="preview" title="Preview only">Preview</button>
+    </div>
+    <button type="button" id="saveBtn" title="Save and sync now (Ctrl+S)">Save</button>
+    <button type="button" id="tasksBtn" aria-pressed="false" title="Show this project's open tasks">Tasks</button>
+  </div>
+</header>
+<div class="banner" id="banner" hidden></div>
+<div class="shell">
+  <aside class="side" id="side">
+    <input type="search" id="find" placeholder="Find a note…" aria-label="Find a note">
+    <div id="tree" class="tree"></div>
+  </aside>
+  <main class="main" id="main" data-mode="split">
+    <div class="empty" id="empty">
+      <p>Notes live in the private repo <code>notes</code>, one folder per project
+      (same projects as your task lists). Choose a project on the left and press <b>+</b> to start one.</p>
+      <p class="muted">Paste or drop images straight into the editor. Math: <code>$x^2$</code>, <code>$$…$$</code>.</p>
+    </div>
+    <textarea id="ed" dir="auto" spellcheck="true" hidden
+      placeholder="Write in markdown. Paste or drop images."></textarea>
+    <article id="pv" class="pv" hidden></article>
+  </main>
+  <aside class="tasks" id="tasks" hidden>
+    <h3>Open tasks</h3>
+    <ul id="taskList"></ul>
+  </aside>
+</div>
+<div class="toasts" id="toasts"></div>
+<script src="/static/vendor/marked/marked.min.js"></script>
+<script src="/static/vendor/dompurify/purify.min.js"></script>
+<script src="/static/vendor/katex/katex.min.js"></script>
+<script src="/static/notes/notes.js"></script>
+</body></html>

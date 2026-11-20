@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Tasks">
+  <rect width="512" height="512" rx="112" fill="#2D1B4E"/>
+  <circle cx="256" cy="256" r="196" fill="none" stroke="#FFF8E6" stroke-opacity="0.16" stroke-width="58" stroke-linecap="round" stroke-dasharray="219.02 88.85" transform="rotate(-77 256 256)"/>
+  <circle cx="256" cy="256" r="196" fill="none" stroke="#FFC857" stroke-width="58" stroke-linecap="round" stroke-dasharray="219.02 88.85 219.02 88.85 219.02 396.73" transform="rotate(-77 256 256)"/>
+  <path d="M162 265 L228 327 L355 194" fill="none" stroke="#FFF8E6" stroke-width="56" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
