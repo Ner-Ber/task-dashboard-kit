@@ -20,10 +20,12 @@ fail=0
 mapfile -d '' FILES < <(cd "$ROOT" && find . -type f -not -path './.git/*' -not -name '*.png' -not -name '*.webp' \
   -not -name '*.ico' -not -name '*.woff2' -not -name '*.jpg' -print0)
 
-scan() {  # scan <label> <regex> [exclude-regex-for-paths] [ignore-regex-for-matched-lines]
-  local label="$1" rx="$2" skip="${3:-^$}" ignore="${4:-^$}" hits
+scan() {  # scan <label> <regex> [exclude-regex-for-paths] [ignore-regex-for-matched-lines] [strip-regex]
+  # strip-regex: text removed from a matched line before re-checking it (e.g. the kit's own URL).
+  local label="$1" rx="$2" skip="${3:-^$}" ignore="${4:-^$}" strip="${5:-}" hits
   hits="$(cd "$ROOT" && for f in "${FILES[@]}"; do [[ "$f" =~ $skip ]] || printf '%s\0' "$f"; done |
-          xargs -0 -r grep -nIE -- "$rx" 2>/dev/null | grep -vE -- "$ignore" | head -20)"
+          xargs -0 -r grep -nIE -- "$rx" 2>/dev/null | grep -vE -- "$ignore" |
+          { if [[ -n "$strip" ]]; then sed -E "s#$strip##g" | grep -E -- "$rx"; else cat; fi; } | head -20)"
   if [[ -n "$hits" ]]; then
     echo "privacy-check: $label"; echo "$hits" | sed 's/^/  /'; fail=1
   fi
@@ -36,12 +38,16 @@ scan "e-mail address" '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.(com|org|net|edu|io|il|
 scan "absolute home path" '(/home/[a-z][a-z0-9_-]*/|/Users/[A-Za-z][^/ ]*/|[A-Z]:\\Users\\[^\\ ]+\\)' '(^\./app/static/vendor/|privacy-check\.sh$)' \
   '(/home/you/|/Users/you/|Users\\you\\|/home/runner/)'
 
+# The kit's own public URL (from `git remote`) may name its owner; that is not a leak.
+SELF="$(git -C "$KIT" remote get-url origin 2>/dev/null | sed -E 's#^git@github\.com:#github.com/#; s#^https?://##; s#\.git$##')"
+SELF_RX="$(printf '%s' "$SELF" | sed -E 's/[].[^$*+?(){}|\\/]/\\&/g')"
+
 if [[ -f "$DENY" ]]; then
   n=0
   while IFS= read -r rx; do
     [[ -z "$rx" || "$rx" == \#* ]] && continue
     n=$((n + 1))
-    scan "denylist match (pattern #$n)" "$rx" '^\./app/static/vendor/'
+    scan "denylist match (pattern #$n)" "$rx" '^\./app/static/vendor/' '^$' "$SELF_RX"
   done < "$DENY"
   echo "privacy-check: $n private denylist patterns checked ($DENY)"
 else

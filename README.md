@@ -1,5 +1,45 @@
 # Task dashboard kit
 
+> **🚀 Start here: paste this into your coding agent** (Codex, GitHub Copilot, Cursor,
+> Gemini CLI, Claude Code, …) and it sets everything up with you, step by step:
+
+```text
+Set up the task dashboard kit for me: https://github.com/Ner-Ber/task-dashboard-kit
+
+1. Clone it to ~/task-dashboard-kit (or use it if it's already there), then read its
+   AGENTS.md and README.md and follow them. They are the source of truth.
+2. Check the requirements: git, python3 >= 3.11, uv (gh is optional, needed for GitHub
+   repos and project activity). If something is missing, tell me how to install it on my
+   system and wait until I have.
+3. Ask me these in ONE message, with the defaults in brackets:
+   a. My task categories as folder:Label pairs [work:Work,side:Side,life:Life].
+   b. Start with sample data to try it out, or empty lists? [sample data]
+   c. My GitHub username, so my tasks and notes get their own PRIVATE repos and sync
+      between machines [recommended; skip = local only].
+   d. Which coding agent(s) I use.
+   e. Which of my code projects (local folders) should show their progress notes, and
+      which category each belongs to.
+4. Copy .env.example to .env and set CATEGORIES (and anything else I answered).
+5. Run scripts/init-data-repos.sh (add --empty and/or --github <user> per my answers).
+   Any GitHub repos it creates must be PRIVATE; check that and tell me.
+6. Install the agent skills for my agent(s) with scripts/install-skills.sh (see the
+   README's agent table).
+7. Start the dashboard with scripts/open-dashboard.sh and give me the link. On Windows
+   with WSL, offer scripts/install-windows-shortcuts.sh for a desktop shortcut.
+8. For each code project from 3e: create the project in my vault
+   (tasks/<category>/<slug>/TASKS.md and memory/projects/<slug>.md with its repo), create
+   its notes folder <category>/<slug>/Progress.md in my notes repo, commit and push both,
+   then run scripts/link-notes.sh <category>/<slug> <project folder>. Show me that
+   `git status` in that project is clean.
+9. Finish with a short summary: where everything lives, how to open the dashboard, and
+   three things I can ask you from now on (e.g. "add a task to <project>: ...").
+
+Rules: never put my tasks or notes into a code repo or into the kit, never commit .env
+or tokens, and ask me instead of guessing.
+```
+
+Prefer to do it by hand? Follow the [Quick start](#quick-start) below.
+
 A personal **task dashboard** plus **progress notes** that show up inside your code
 projects, managed by you in a browser and by any coding agent (Codex, Copilot,
 Cursor, Gemini CLI, Claude Code) through plain markdown files in git.
