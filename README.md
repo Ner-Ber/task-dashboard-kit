@@ -40,13 +40,13 @@ Prefer to do it by hand? Follow the [Quick start](#quick-start) below.
 
 | Tasks | Progress notes |
 |---|---|
-| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/tasks-dark.png"><img src="docs/images/tasks.png" alt="Tasks page: Urgent, On the desk and Any time, with the Start here tour"></picture> | <img src="docs/images/notes.png" alt="Notes tab: editor and live preview of a progress note"> |
+| <a href="docs/images/tasks.png"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/tasks-dark.png"><img src="docs/images/tasks.png" alt="Tasks page: Urgent, On the desk and Any time, with the Start here tour"></picture></a> | <a href="docs/images/notes.png"><img src="docs/images/notes.png" alt="Notes tab: editor and live preview of a progress note"></a> |
 
 New users get a **Start here** project (above) that is the tutorial: each task shows one
 feature, from ticking a box to linking notes into a code project, and the last one
 removes the sample data. Notes even include a practice edit conflict:
 
-<img src="docs/images/conflict.png" alt="A conflict copy compared with its note, with Merge and Discard buttons" width="720">
+<a href="docs/images/conflict.png"><img src="docs/images/conflict.png" alt="A conflict copy compared with its note, with Merge and Discard buttons" width="720"></a>
 
 A personal **task dashboard** plus **progress notes** that show up inside your code
 projects, managed by you in a browser and by any coding agent (Codex, Copilot,
