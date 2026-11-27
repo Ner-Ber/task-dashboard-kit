@@ -48,6 +48,8 @@ fresh "$VAULT"; fresh "$NOTES"
 cp -R "$KIT/templates/vault/." "$VAULT/"
 cp -R "$KIT/templates/notes/." "$NOTES/"
 chmod +x "$NOTES/.notes/sync.sh"
+# Sample dates are placeholders ({{d+1}}, {{h-2}}, …): make them relative to today.
+python3 "$KIT/scripts/fill-dates.py" "$VAULT" "$NOTES"
 
 if (( EMPTY )); then
   rm -rf "$VAULT/tasks" "$VAULT/memory/projects/"*.md "$NOTES"/*/

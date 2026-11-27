@@ -102,18 +102,22 @@ def test_templates_render(monkeypatch, tmp_path):
     vault = tmp_path / "vault"
     shutil.copytree(KIT / "templates/vault", vault)
     shutil.copytree(KIT / "templates/notes", tmp_path / "notes")
+    sh(KIT, "python3", str(KIT / "scripts/fill-dates.py"), str(vault), str(tmp_path / "notes"))
     for d in (vault, tmp_path / "notes"):
+        assert not [f for f in d.rglob("*.md") if "{{" in f.read_text()], "unfilled date placeholder"
         sh(d, "git", "init", "-q")
     m = load_dashboard(monkeypatch)
     data = m.collect(vault, activity={})
     titles = {p["title"] for p in data["projects"]}
-    assert {"Website relaunch", "Garden sensor", "Reading group"} <= titles
+    assert {"Start here", "Website relaunch", "Garden sensor", "Reading group"} <= titles
     keys = {(l["domain"], l.get("project")) for l in data["task_lists"]}
     assert ("Work", "website") in keys and ("Side", "garden-sensor") in keys
     page = m.render(data, {}, live=True)
     assert "Book the quarterly planning room" in page and "<title>Tasks</title>" in page
     notes = {p["key"]: [n["name"] for n in p["notes"]] for p in m.notes_projects(vault)}
     assert notes["work/website"] == ["Progress"] and notes["side/garden-sensor"] == ["Progress"]
+    assert "Progress" in notes["work/start-here"]
+    assert any(".conflict-" in n for n in notes["work/start-here"])
     body, ctype = m.note_asset(vault, "work/website", "attachments/2026-11-18-101500.png")
     assert ctype == "image/png" and body[:4] == b"\x89PNG"
 
@@ -127,3 +131,16 @@ def test_skills_have_frontmatter():
 def test_privacy_check_passes():
     r = sh(KIT, str(KIT / "scripts/privacy-check.sh"), check=False)
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_fill_dates_relative_to_today(tmp_path):
+    f = tmp_path / "TASKS.md"
+    f.write_text("- [ ] x ➕ {{d+0}} 📅 {{d+3}} ✅ {{d-1}}\n## {{h-2}} - y\n")
+    sh(KIT, "python3", str(KIT / "scripts/fill-dates.py"), str(tmp_path), "--today", "2026-12-30")
+    assert f.read_text() == "- [ ] x ➕ 2026-12-30 📅 2027-01-02 ✅ 2026-12-29\n## Dec 28, 2026 - y\n"
+
+
+def test_start_here_tutorial_ids_unique():
+    import re
+    ids = re.findall(r"🆔 ([0-9a-f]{6})", "".join(p.read_text() for p in (KIT / "templates/vault").rglob("*.md")))
+    assert len(ids) == len(set(ids)) and all(len(i) == 6 for i in ids)

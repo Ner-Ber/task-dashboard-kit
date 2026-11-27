@@ -1,6 +1,6 @@
 # Task dashboard kit
 
-> **🚀 Start here: paste this into your coding agent** (Codex, GitHub Copilot, Cursor,
+> **🚀 Quick setup: paste this into your coding agent** (Codex, GitHub Copilot, Cursor,
 > Gemini CLI, Claude Code, …) and it sets everything up with you, step by step:
 
 ```text
@@ -12,33 +12,41 @@ Set up the task dashboard kit for me: https://github.com/Ner-Ber/task-dashboard-
    repos and project activity). If something is missing, tell me how to install it on my
    system and wait until I have.
 3. Ask me these in ONE message, with the defaults in brackets:
-   a. My task categories as folder:Label pairs [work:Work,side:Side,life:Life].
-   b. Start with sample data to try it out, or empty lists? [sample data]
+   a. Start with the guided tour and sample data, or empty lists? [tour + sample data]
+   b. Only if empty lists: my task categories as folder:Label pairs
+      [work:Work,side:Side,life:Life] and which code projects (local folders) should
+      show their progress notes. (With the tour, the last tour task sets these up.)
    c. My GitHub username, so my tasks and notes get their own PRIVATE repos and sync
       between machines [recommended; skip = local only].
    d. Which coding agent(s) I use.
-   e. Which of my code projects (local folders) should show their progress notes, and
-      which category each belongs to.
-4. Copy .env.example to .env and set CATEGORIES (and anything else I answered).
+4. Copy .env.example to .env. Only for empty lists, set CATEGORIES from my answer.
 5. Run scripts/init-data-repos.sh (add --empty and/or --github <user> per my answers).
    Any GitHub repos it creates must be PRIVATE; check that and tell me.
 6. Install the agent skills for my agent(s) with scripts/install-skills.sh (see the
    README's agent table).
 7. Start the dashboard with scripts/open-dashboard.sh and give me the link. On Windows
    with WSL, offer scripts/install-windows-shortcuts.sh for a desktop shortcut.
-8. For each code project from 3e: create the project in my vault
-   (tasks/<category>/<slug>/TASKS.md and memory/projects/<slug>.md with its repo), create
-   its notes folder <category>/<slug>/Progress.md in my notes repo, commit and push both,
-   then run scripts/link-notes.sh <category>/<slug> <project folder>. Show me that
-   `git status` in that project is clean.
-9. Finish with a short summary: where everything lives, how to open the dashboard, and
-   three things I can ask you from now on (e.g. "add a task to <project>: ...").
+8. Only for empty lists: set up each code project as in AGENTS.md ("Your own projects")
+   and show me that `git status` in each project is clean.
+9. Finish with a short summary: where everything lives and how to open the dashboard.
+   With the tour: tell me to work through the "Start here" tasks at the top of the
+   dashboard, and help with each one when I ask (AGENTS.md, "The Start here tour").
 
 Rules: never put my tasks or notes into a code repo or into the kit, never commit .env
 or tokens, and ask me instead of guessing.
 ```
 
 Prefer to do it by hand? Follow the [Quick start](#quick-start) below.
+
+| Tasks | Progress notes |
+|---|---|
+| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/tasks-dark.png"><img src="docs/images/tasks.png" alt="Tasks page: Urgent, On the desk and Any time, with the Start here tour"></picture> | <img src="docs/images/notes.png" alt="Notes tab: editor and live preview of a progress note"> |
+
+New users get a **Start here** project (above) that is the tutorial: each task shows one
+feature, from ticking a box to linking notes into a code project, and the last one
+removes the sample data. Notes even include a practice edit conflict:
+
+<img src="docs/images/conflict.png" alt="A conflict copy compared with its note, with Merge and Discard buttons" width="720">
 
 A personal **task dashboard** plus **progress notes** that show up inside your code
 projects, managed by you in a browser and by any coding agent (Codex, Copilot,
@@ -77,7 +85,7 @@ cd ~/task-dashboard-kit
 
 ### 2. Create your vault and notes repos
 
-From the templates, with sample data (recommended the first time):
+From the templates, with sample data and the **Start here** tour (recommended the first time):
 
 ```bash
 scripts/init-data-repos.sh

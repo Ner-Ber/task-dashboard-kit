@@ -104,6 +104,45 @@ hidden from git by a line `/progress` in `.git/info/exclude`. Read it for contex
 you edit notes there, sync with `<notes repo>/.notes/sync.sh`
 (`readlink -f progress` shows where the notes repo is).
 
+## The Start here tour and sample data
+
+`init-data-repos.sh` (without `--empty`) installs sample data: the example projects
+*Website relaunch*, *Garden sensor*, *Reading group*, the sample tasks in the category
+lists and `TASKS.md`, and the tutorial project **Start here** (`tasks/work/start-here/`,
+notes `work/start-here/` with a practice conflict copy). Sample dates are relative to the
+day of setup.
+
+When the user asks for help with a Start here task, do exactly what it says and explain
+the one feature it shows. The agent-facing ones:
+
+- **"add a task to Start here: …"**: add it as described under Vault layout, then tell the
+  user where it appears in the dashboard (Urgent / On the desk / Any time by due date).
+- **"link my <project> notes into <its folder>"**: follow "Your own projects" below for that
+  one project.
+- **"remove the sample data and set up my own categories"**:
+  1. Ask for their categories (`folder:Label`, e.g. `work:Work,phd:PhD,home:Home`) and
+     their code projects (local folder, category, GitHub `owner/repo` if any).
+  2. Vault: delete the sample projects (`tasks/<cat>/<project>/` for website,
+     garden-sensor, reading-group, start-here; their `memory/projects/*.md`), the sample
+     lines in `TASKS.md` and the category lists, and category folders not in the new list.
+     Keep anything the user added during the tour (ask if unsure). Create
+     `tasks/<folder>/TASKS.md` for each new category (heading = label, the four sections).
+  3. Notes: delete the sample folders (`work/website/`, `side/garden-sensor/`,
+     `life/reading-group/`, `work/start-here/`, the sample `<category>/Progress.md`) unless
+     the user wrote in them. Remove any `progress/` links made during the tour with
+     `scripts/link-notes.sh --unlink <repo>`.
+  4. Set `CATEGORIES` in the kit's `.env` and restart: `scripts/open-dashboard.sh --restart`.
+  5. Set up their code projects as in "Your own projects". Commit and push vault and notes.
+
+## Your own projects
+
+For each code project: create `tasks/<category>/<slug>/TASKS.md` (heading = project name,
+the four sections) and `memory/projects/<slug>.md` (`**Domain:**`, `**Status:** active`,
+`**Repo:**` if it has one, `**Local:**`) in the vault; create `<category>/<slug>/Progress.md`
+(first line `# Progress`) in the notes repo; commit and push both; then run
+`scripts/link-notes.sh <category>/<slug> <project folder>` from the kit and check that
+`git status` in the project shows nothing new.
+
 ## Rules (all agents)
 
 1. **Never put vault or notes content into a code repository**: no copying files,
