@@ -334,3 +334,92 @@ def test_static_files_stay_inside_static():
     assert D.static_file("notes/notes.js")
     for bad in ("../dashboard.py", "vendor/../../dashboard.py", "/etc/passwd", "notes/../../SKILL.md", ""):
         assert D.static_file(bad) is None
+
+
+def test_union_merge_keeps_everything():
+    a = "# P\n\n## Nov 24\n- new numbers 603\n- shared\n"
+    b = "# P\n\n## Nov 24\n- old numbers 600\n- shared\n- only in copy\n"
+    m = D.union_merge(a, b)
+    assert m.startswith("# P\n\n## Nov 24\n- new numbers 603\n- old numbers 600\n- shared\n- only in copy")
+    assert D.union_merge(a, a) == a
+
+
+def test_conflict_diff_merge_and_discard(vault):
+    nd = NOTES(vault) / "work/website"
+    (nd / "Progress.md").write_text("# Progress\n\nkeep\nmine\n")
+    (nd / "Progress.conflict-20261124-104952.md").write_text("# Progress\n\nkeep\ntheirs\n")
+    d = D.conflict_diff(vault, "work/website", "Progress.conflict-20261124-104952")
+    assert d["note"] == "Progress" and d["only_in_note"] == 1 and d["only_in_copy"] == 1
+    kinds = [t for h in d["hunks"] for t, _ in h["lines"]]
+    assert "-" in kinds and "+" in kinds
+    r = D.conflict_resolve(vault, "work/website", "Progress.conflict-20261124-104952", "merge")
+    assert r["plan"]["combined"] == ["(whole note)"] and not (nd / "Progress.conflict-20261124-104952.md").exists()
+    assert (nd / "Progress.md").read_text() == "# Progress\n\nkeep\nmine\ntheirs\n"
+    (nd / "Progress.conflict-20261124-110000.md").write_text("older\n")
+    D.conflict_resolve(vault, "work/website", "Progress.conflict-20261124-110000", "discard")
+    assert not (nd / "Progress.conflict-20261124-110000.md").exists()
+    assert (nd / "Progress.md").read_text().endswith("theirs\n")      # note untouched by discard
+    with pytest.raises(D.NotesPathError):
+        D.conflict_resolve(vault, "work/website", "Progress", "discard")       # never deletes a real note
+    with pytest.raises(ValueError):
+        D.conflict_resolve(vault, "work/website", "Progress.conflict-20261124-110000", "rm")
+
+
+NOTE_NEW = """# Progress
+
+_New entries go at the top._
+
+## Nov 24, 2026
+
+- 603 runs, 377 promoted
+- reference 0.2304
+
+## Nov 20, 2026 - 2-month goals
+
+- goal A
+"""
+COPY_OLD = """# Progress
+
+## Nov 20, 2026 - 2-month goals
+
+- goal A
+
+## Nov 24, 2026
+
+- 600 runs, 326 promoted
+- reference 0.2434
+"""
+
+
+def test_notebook_merge_newer_note_wins_per_entry():
+    text, plan = D.notebook_merge(NOTE_NEW, COPY_OLD, note_newer=True)
+    assert text == NOTE_NEW                                     # today's case: nothing to merge
+    assert plan["kept_note"] == ["## Nov 24, 2026"] and plan["same"] == 1 and not plan["added"]
+
+
+def test_notebook_merge_adds_entries_by_date_and_combines():
+    copy = COPY_OLD.replace("## Nov 24, 2026", "## Nov 25, 2026\n\n- written on the server\n\n## Nov 24, 2026") \
+                   + "\n## Nov 22, 2026\n\n- lost entry\n"
+    text, plan = D.notebook_merge(NOTE_NEW, copy, note_newer=False)
+    heads = [l for l in text.split("\n") if l.startswith("## ")]
+    assert heads == ["## Nov 25, 2026", "## Nov 24, 2026", "## Nov 22, 2026", "## Nov 20, 2026 - 2-month goals"]
+    assert plan["added"] == ["## Nov 25, 2026", "## Nov 22, 2026"] and plan["combined"] == ["## Nov 24, 2026"]
+    assert "- 603 runs, 377 promoted" in text and "- 600 runs, 326 promoted" in text  # concurrent: keep both
+    assert text.count("goal A") == 1 and text.startswith("# Progress\n\n_New entries go at the top._\n\n## Nov 25")
+
+
+def test_conflict_resolve_uses_edit_time(vault):
+    nd = NOTES(vault) / "work/website"
+    (nd / "Progress.md").write_text(NOTE_NEW)
+    sh(NOTES(vault), "git", "add", "-A"), sh(NOTES(vault), "git", "commit", "-qm", "edit after conflict")
+    old = "Progress.conflict-20200101-000000"                  # conflict long before the last edit
+    (nd / f"{old}.md").write_text(COPY_OLD)
+    d = D.conflict_diff(vault, "work/website", old)
+    assert d["plan"]["note_newer"] and d["plan"]["kept_note"] == ["## Nov 24, 2026"]
+    r = D.conflict_resolve(vault, "work/website", old, "merge")
+    assert (nd / "Progress.md").read_text() == NOTE_NEW and not (nd / f"{old}.md").exists()
+    assert r["plan"]["kept_note"]
+    future = "Progress.conflict-29990101-000000"               # no edit after it: combine
+    (nd / f"{future}.md").write_text(COPY_OLD)
+    D.conflict_resolve(vault, "work/website", future, "merge")
+    assert "600 runs" in (nd / "Progress.md").read_text()

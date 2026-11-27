@@ -89,8 +89,20 @@
             const li = document.createElement("li"), a = document.createElement("a");
             a.href = "#" + qs({key: p.key, note: nt.name}); a.textContent = nt.name; a.dir = "auto";
             if (cur && cur.key === p.key && cur.name === nt.name) a.className = "on";
-            if (nt.conflict) { a.classList.add("cf"); a.title = "Conflict copy — compare and delete when done"; }
-            li.append(a); ul.append(li);
+            if (nt.conflict) { a.classList.add("cf"); a.title = "Conflict copy: click to compare with the note"; }
+            li.append(a);
+            if (nt.conflict) {
+              li.className = "cfi";
+              const acts = document.createElement("span"); acts.className = "cfacts";
+              const mb = document.createElement("button"); mb.type = "button"; mb.textContent = "⇄ Merge";
+              mb.title = "Merge per dated entry: add entries only the copy has; for shared entries the later-edited version wins";
+              mb.onclick = e => { e.preventDefault(); e.stopPropagation(); resolveConflict(p.key, nt.name, "merge"); };
+              const db = document.createElement("button"); db.type = "button"; db.textContent = "×";
+              db.title = "Discard this copy (keep the note as it is; the copy stays in git history)";
+              db.onclick = e => { e.preventDefault(); e.stopPropagation(); resolveConflict(p.key, nt.name, "discard"); };
+              acts.append(mb, db); li.append(acts);
+            }
+            ul.append(li);
           }
           div.append(ul);
         }
@@ -111,8 +123,11 @@
     cur = {key, name, base: j.hash, path: j.path};
     ed.value = j.text; dirty = false;
     $("#empty").hidden = true; ed.hidden = false; pv.hidden = false;
+    main.classList.toggle("conflict", CONFLICT_RE.test(name));
     openProjects.add(key); store(OPEN_KEY, [...openProjects]);
-    drawCrumb(); drawTree(); render(); refreshState(); loadTasks();
+    drawCrumb(); drawTree();
+    if (CONFLICT_RE.test(name)) await showConflict(key, name); else render();
+    refreshState(); loadTasks();
     if (location.hash.slice(1) !== qs({key, note: name})) history.replaceState(null, "", "#" + qs({key, note: name}));
   }
   function drawCrumb() {
@@ -241,12 +256,69 @@
     setState("conflict");
   }
 
+  // ---------------------------------------------------------------- conflict copies: diff, merge, discard
+  const CONFLICT_RE = /^(.+)\.conflict-\d{8}-\d{6}$/;
+  // One sentence on what ⇄ Merge will do (entry by entry, see notebook_merge in dashboard.py).
+  function planText(p) {
+    if (!p) return "";
+    const parts = [];
+    if (p.added.length) parts.push(`add ${p.added.length} entr${p.added.length === 1 ? "y" : "ies"} that only the copy has (${p.added.join("; ")})`);
+    if (p.kept_note.length) parts.push(`keep your note's newer version of ${p.kept_note.length} entr${p.kept_note.length === 1 ? "y" : "ies"} (edited after the conflict)`);
+    if (p.combined.length) parts.push(`combine both versions' lines in ${p.combined.length} entr${p.combined.length === 1 ? "y" : "ies"} (${p.combined.join("; ")})`);
+    return parts.length ? "Merge will " + parts.join(", ") + "." : "Merge would change nothing: the note already has everything in the copy.";
+  }
+  async function showConflict(key, name) {
+    let d;
+    try { d = await api("/notes/api/conflict?" + qs({key, name})); }
+    catch (e) { pv.textContent = "Can't compare: " + e.message; return; }
+    const escH = t => t.replace(/[&<>]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;"}[c]));
+    let h = `<div class="cfhead"><b>Conflict copy</b> of <a href="#${qs({key, note: d.note})}">${escH(d.note)}</a>`
+      + ` <span class="muted">· <span class="dminus">${d.only_in_note} line(s) only in the note</span>`
+      + ` · <span class="dplus">${d.only_in_copy} line(s) only in this copy</span></span>`
+      + `<div class="cfbtns"><button type="button" data-how="merge" title="Merge per dated entry, then delete the copy">⇄ Merge into ${escH(d.note)}</button>`
+      + `<button type="button" data-how="discard" title="Delete this copy; the note stays as it is">× Discard copy</button></div>`
+      + `<p class="plan">${escH(planText(d.plan))}</p>`
+      + `<p class="muted">Red (−) = only in the note, green (+) = only in this copy. Merge works per dated entry`
+      + ` (<code>## Mon D, YYYY</code>): new entries are added by date; for an entry both have, the version edited`
+      + ` later wins.</p></div>`;
+    if (!d.hunks.length) h += `<p>The two files are identical.</p>`;
+    for (const hk of d.hunks) {
+      h += `<div class="hunk"><div class="hh">@@ note line ${hk.a} · copy line ${hk.b} @@</div>`;
+      for (const [t, x] of hk.lines)
+        h += `<div class="dl ${t === "-" ? "dminus" : t === "+" ? "dplus" : ""}" dir="auto">`
+          + `<span class="dg">${t === "=" ? " " : t === "-" ? "−" : "+"}</span>${escH(x) || "&nbsp;"}</div>`;
+      h += `</div>`;
+    }
+    pv.innerHTML = h;
+    pv.querySelectorAll(".cfbtns button").forEach(b => b.onclick = () => resolveConflict(key, name, b.dataset.how));
+  }
+  async function resolveConflict(key, name, how) {
+    const base = (CONFLICT_RE.exec(name) || [])[1];
+    if (how === "discard" && !confirm(`Delete the conflict copy "${name}"?\n\nThe note "${base}" stays as it is; the copy stays in git history.`)) return;
+    if (how === "merge") {
+      let d; try { d = await api("/notes/api/conflict?" + qs({key, name})); } catch (e) { toast("Can't merge: " + e.message); return; }
+      if (!confirm(planText(d.plan) + `\n\nThen the copy is deleted (it stays in git history). Go ahead?`)) return;
+    }
+    try {
+      await flush(false);
+      const j = await api("/notes/api/conflict/resolve", {key, name, how});
+      const pl = j.plan || {};
+      toast(how === "merge" ? `Merged into ${j.note}: ${(pl.added || []).length} added, ${(pl.kept_note || []).length} kept newer, `
+        + `${(pl.combined || []).length} combined; copy deleted` : `Conflict copy deleted`);
+      unsynced = true; scheduleSync();
+      if (cur && cur.key === key && cur.name === name) { cur = null; location.hash = qs({key, note: j.note}); }
+      await loadList();
+      if (cur && cur.key === key && cur.name === j.note) { cur.base = null; const n = cur.name; cur = null; await openNote(key, n); }
+    } catch (e) { toast("Not done: " + e.message); }
+  }
+
   // ---------------------------------------------------------------- preview
   marked.setOptions({gfm: true, breaks: true});
   // Math is cut out before markdown (so _ and \ inside it survive) and rendered by KaTeX after.
   const MATH_RE = /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)|\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|\$(?![\s$])((?:\\\$|[^$\n`])+?)(?<![\s\\])\$(?!\d)/g;
   function render() {
     if (!cur) return;
+    if (main.classList.contains("conflict")) return;   // the diff view owns the pane
     const math = [];
     const src = ed.value.replace(MATH_RE, (m, code, d1, d2, i1, i2) => {
       if (code) return m;

@@ -36,7 +36,7 @@
       progress/ symlink in a code repo to its vault notes, hidden via .git/info/exclude.
   dashboard.py import-obsidian <obsidian-dir> <mapping.json> [--dry-run]
       One-time copy of Obsidian notes (+ images) into the vault's notes folders.
-      Code TODO files (*todo*.md) in a project's linked repo/branch show on its
+      Code TODO files (*todo*.md / *todo*.txt) in a project's linked repo/branch show on its
       card; ticking one commits the close to that branch on GitHub (undoable).
       Every change is one commit, pushed, and can be undone.
       Keep-style add rows on every task list POST /add (typed line or
@@ -155,8 +155,36 @@ def task_id(raw: str) -> str:
     return m.group(1) if m else hashlib.sha1(raw.encode()).hexdigest()[:10]
 
 
+# Source citation on a task line: "🔗 <ref>" (several allowed). ref is one token:
+#   gmail:<threadId>   sheet:<id>[#gid=N]   doc:<id>   drive:<id>   https://…
+#   or a vault note path (inbox/… or memory/…, .md): e.g. a saved WhatsApp message.
+CITE_RE = re.compile(r"🔗\s*(\S+)")
+CITE_NOTE_RE = re.compile(r"^(?:inbox|memory)/[\w./-]+\.md$")
+
+
+def cite_info(ref: str, base: str = "") -> dict:
+    """What a 🔗 ref points to: {kind, icon, label, url[, path]} (url "" when unknown)."""
+    m = re.fullmatch(r"(gmail|sheet|doc|drive):([\w-]+)(#[\w=]+)?", ref)
+    if m:
+        kind, rid, frag = m.group(1), m.group(2), m.group(3) or ""
+        url = {"gmail": f"https://mail.google.com/mail/u/0/#all/{rid}",
+               "sheet": f"https://docs.google.com/spreadsheets/d/{rid}/edit{frag}",
+               "doc": f"https://docs.google.com/document/d/{rid}/edit",
+               "drive": f"https://drive.google.com/file/d/{rid}/view"}[kind]
+        label = {"gmail": "Gmail thread", "sheet": "Google Sheet", "doc": "Google Doc", "drive": "Drive file"}[kind]
+        return {"kind": kind, "icon": {"gmail": "📨", "sheet": "📊"}.get(kind, "📄"), "label": label, "url": url}
+    if re.fullmatch(r"https?://\S+", ref):
+        host = re.sub(r"^https?://(www\.)?", "", ref).split("/")[0]
+        return {"kind": "url", "icon": "🔗", "label": host, "url": ref}
+    if CITE_NOTE_RE.match(ref) and ".." not in ref.split("/"):
+        return {"kind": "note", "icon": "💬", "label": ref.rsplit("/", 1)[-1][:-3], "path": ref,
+                "url": f"{base}/{ref}" if base else ""}
+    return {"kind": "unknown", "icon": "🔗", "label": ref[:60], "url": ""}
+
+
 def clean_text(raw: str) -> str:
-    text = re.sub(r"→\s*`[^`]*`", "", raw)
+    text = CITE_RE.sub("", raw)
+    text = re.sub(r"→\s*`[^`]*`", "", text)
     text = re.sub(r"(📅|⏳|✅|➕|👀|❌)\s*" + DATE, "", text)
     text = ID_RE.sub("", text)
     text = re.sub(rf"\[{DOMAIN_TAG}\]", "", text).replace("‼️", "").replace("🔽", "")
@@ -180,6 +208,7 @@ def parse_task(raw: str, source: str, section: str = "", project: str | None = N
         "reviewed": date("👀"),
         "touched": None,  # set by collect from git blame
         "project": link.group(1) if link else project,
+        "cites": CITE_RE.findall(raw),
         "source": source,
         "section": section,
         "line": line,
@@ -414,9 +443,14 @@ def repo_activity(spec: str, since: str) -> dict:
 # ---------------------------------------------------------------- code TODO files
 # A linked repo/branch may keep its own backlog in markdown (e.g. docs/CODE_TODO.md).
 # Two shapes are understood: "### `id`" item blocks with a "- **Status:** open" field
-# (the etas CODE_TODO format), and plain "- [ ] text" checkbox lines. The dashboard
+# (e.g. a CODE_TODO.md), and plain "- [ ] text" checkbox lines. A plain-text
+# *todo*.txt holds one item per "# text" line ("## x" is a heading, an indented "#   x"
+# line is a note on the item above, "# ✅ date text" is closed). The dashboard
 # shows the open items and can close one; closing commits to that branch on GitHub.
-CODE_TODO_FILE_RE = re.compile(r"(?i)(?:^|/)[^/]*todo[^/]*\.md$")
+CODE_TODO_FILE_RE = re.compile(r"(?i)(?:^|/)[^/]*todo[^/]*\.(?:md|txt)$")
+HASH_ITEM_RE = re.compile(r"^#(?!#)\s?(\S.*?)\s*$")
+HASH_NOTE_RE = re.compile(r"^#\s{2,}(\S.*?)\s*$")
+HASH_DONE = "✅"
 CODE_TODO_OPEN = ("open", "in_progress", "blocked")
 ITEM_HEAD_RE = re.compile(r"^###\s+(.*?)\s*$")
 FIELD_RE = re.compile(r"^\s*- \*\*([A-Za-z ]+):\*\*\s*(.*)$")
@@ -459,9 +493,35 @@ def item_blocks(lines: list[str]) -> list[tuple[int, int, str]]:
     return out
 
 
-def parse_code_todo(text: str) -> list[dict]:
+def hash_key(text: str) -> str:
+    return "hs-" + hashlib.sha1(text.strip().encode()).hexdigest()[:10]
+
+
+def parse_hash_todo(lines: list[str]) -> list[dict]:
+    """Open items of a plain-text TODO list (see CODE_TODO_FILE_RE's comment)."""
+    items: list[dict] = []
+    last_open = False
+    for n, l in enumerate(lines, 1):
+        if (m := HASH_NOTE_RE.match(l)):
+            if last_open:
+                items[-1]["title"] += " " + m.group(1)
+            continue
+        m = HASH_ITEM_RE.match(l)
+        if not m:
+            last_open = False
+            continue
+        last_open = not m.group(1).startswith(HASH_DONE)
+        if last_open:
+            items.append({"key": hash_key(m.group(1)), "kind": "check", "status": "open",
+                          "line": n, "title": m.group(1), "updated": ""})
+    return items
+
+
+def parse_code_todo(text: str, path: str = "") -> list[dict]:
     """Open items of a code TODO file, in file order."""
     lines = text.split("\n")
+    if path.lower().endswith(".txt"):
+        return parse_hash_todo(lines)
     items = []
     for start, end, key in item_blocks(lines):
         fields = {}
@@ -486,7 +546,7 @@ def code_todos(repo: str, ref: str, html_url: str) -> list[dict]:
     out = []
     for path in find_code_todo_files(repo, ref):
         text, _ = gh_file(repo, path, ref)
-        items = parse_code_todo(text)
+        items = parse_code_todo(text, path)
         if items or "todo" in path.lower():
             out.append({"path": path, "url": f"{html_url}/blob/{ref}/{path}", "items": items})
     return out
@@ -497,6 +557,14 @@ def close_code_todo(text: str, key: str, when: str) -> tuple[str, str]:
     under "## Done" (created at the end if missing). Checkbox lines: ticked in place.
     Returns (new text, item title). LookupError when the item is gone or already closed."""
     lines = text.split("\n")
+    if key.startswith("hs-"):
+        for i, l in enumerate(lines):
+            m = HASH_ITEM_RE.match(l)
+            if m and not HASH_NOTE_RE.match(l) and not m.group(1).startswith(HASH_DONE) \
+                    and hash_key(m.group(1)) == key:
+                lines[i] = f"# {HASH_DONE} {when[:10]} {m.group(1)}"
+                return "\n".join(lines), m.group(1)
+        raise LookupError("item not found (file changed since the page loaded); press ↻ Update")
     if key.startswith("cb-"):
         for i, l in enumerate(lines):
             if (m := TASK_RE.match(l)) and check_key(m.group(1)) == key:
@@ -897,8 +965,13 @@ def task_li(t: dict, today: dt.date, titles: dict, live: bool = False, show_proj
              f' data-bucket="{bkt}"'
              + (f' data-project="{html.escape(t["project"])}"' if t.get("project") else "")
              if t.get("id") else "")
+    cites = "".join(
+        f'<a class="cite" href="{html.escape(c["url"])}" target="_blank" rel="noopener" '
+        f'title="Source: {html.escape(c["label"])}">{c["icon"]}</a>' if c["url"] else
+        f'<span class="cite" title="Source: {html.escape(c["label"])}">{c["icon"]}</span>'
+        for c in (cite_info(r, vurl) for r in t.get("cites") or []))
     return (f'<li data-domain="{t["domain"] or "NONE"}"{attrs}>{box}{dom}<span class="t" dir="auto">'
-            f'{md(t["text"])}</span>{date_badge(t, today)}{proj}{src}{ACTS if live else ""}</li>')
+            f'{md(t["text"])}</span>{cites}{date_badge(t, today)}{proj}{src}{ACTS if live else ""}</li>')
 
 
 ACTS = ('<span class="acts"><button data-a="src" title="Where this came from">↗</button>'
@@ -1554,7 +1627,7 @@ body {{ padding-left:calc(var(--rail-w) + 2 * var(--rail-gap) + 4px) }}
 .rail-head {{ display:flex; flex-direction:column; gap:8px; flex:none }}
 .rail-head h1 {{ font-size:1.2rem; line-height:1.25; margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }}
 .rail .tabs {{ display:flex; margin:0 }} .rail .tabs a {{ flex:1; text-align:center }}
-.rail-acts {{ display:flex; gap:6px }} .rail-acts > button {{ flex:1; margin:0 }}
+.rail-acts {{ display:flex; flex-wrap:wrap; gap:6px }} .rail-acts > button {{ flex:1 1 calc(50% - 3px); margin:0 }}
 @media (max-width:900px) {{
   body {{ padding-left:16px }}
   .rail {{ position:static; width:auto; margin-bottom:12px }}
@@ -1635,6 +1708,9 @@ h3 {{ font-size:15px; margin:0 }} h4 {{ font-size:11px; text-transform:uppercase
 .card li::before {{ content:"•"; position:absolute; left:0; color:var(--muted) }}
 .card footer {{ margin-top:auto; padding-top:6px; border-top:1px solid var(--border); display:flex; flex-wrap:wrap; gap:4px 10px; align-items:baseline }}
 .repo {{ font-size:12px; font-weight:600 }}
+.cite {{ text-decoration:none; font-size:12px; margin:0 2px; opacity:.8; flex:none }} .cite:hover {{ opacity:1 }}
+.citeq {{ margin:4px 0 6px; padding:4px 10px; border-inline-start:3px solid var(--border); color:var(--muted);
+  white-space:pre-wrap; font-size:12.5px; max-height:14em; overflow:auto }}
 .code {{ list-style:none; margin:6px 0 0; padding:0; font-size:12px; display:grid; gap:2px }}
 .code .branch {{ font-family:ui-monospace,monospace; font-weight:400; padding:0 4px; border-radius:4px; background:var(--c0-bg); color:var(--c0) }}
 .code .local code {{ font-size:11px }}
@@ -2412,7 +2488,10 @@ LIVE_JS = r"""<div class="toasts"></div>
       if (s.error) throw new Error(s.error);
       const c = x => x ? `<a href="${esc(x.url)}">${esc(x.date)} ${esc(x.subject)}</a>` : "unknown";
       const notes = s.notes.map(n => `<a href="${esc(n.url)}">${esc(n.path)}</a>`).join(", ");
-      row.innerHTML = `<span class="bt" dir="auto">Added: ${c(s.first)}${s.added ? " (➕ " + esc(s.added) + ")" : ""}<br>`
+      const cites = (s.cites || []).map(x =>
+        `<b>Source:</b> ${x.icon} ${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.label)}</a>` : esc(x.label)}`
+        + (x.quote ? `<blockquote class="citeq" dir="auto">${esc(x.quote)}</blockquote>` : "") + "<br>").join("");
+      row.innerHTML = `<span class="bt" dir="auto">${cites}Added: ${c(s.first)}${s.added ? " (➕ " + esc(s.added) + ")" : ""}<br>`
         + `Last changed: ${c(s.last)}<br>In <a href="${esc(s.file)}">${esc(li.dataset.src)}</a>`
         + (notes ? `<br>Mentioned in: ${notes}` : "") + `</span><span class="bb"><button>×</button></span>`;
     } catch (e) { row.dataset.state = "error"; row.innerHTML = `<span class="bt">${esc(e.message)}</span><span class="bb"><button>×</button></span>`; }
@@ -2431,7 +2510,7 @@ LIVE_JS = r"""<div class="toasts"></div>
       ["+1 month", () => act(li, "snooze", plus(30))], ["Pick date…", () => pickDate(b, "", v => act(li, "snooze", v))]]);
     if (r === "answer" || r === "skip") {
       // Record the choice locally (no Claude). Vault edits for free-text review
-      // items happen in the Cursor Project chat when needed.
+      // items happen in your agent chat when needed.
       li.classList.add("working");
       try {
         await post("/review", {review: li.dataset.rid, answer: r === "skip" ? "skipped" : b.textContent});
@@ -2545,17 +2624,33 @@ LIVE_JS = r"""<div class="toasts"></div>
   ub.className = "updbtn"; ub.textContent = "↻ Update";
   ub.title = "Refresh from disk/git: pull, recollect tasks, rebuild stubs (no Claude)";
   pb.after(ub);
+  const sb = document.createElement("button");
+  sb.className = "updbtn smartbtn"; sb.textContent = "✦ Smart";
+  sb.title = "Update, then Claude reads your mail and calendar (read-only) for emails to answer, the calendar, "
+    + "today's headline and proposed / likely-done tasks. Takes 1–3 minutes; you can keep working.";
+  ub.after(sb);
+  const rb = document.createElement("button");
+  rb.className = "updbtn reviewbtn"; rb.textContent = "☑ Review";
+  rb.title = "Weekly review: find overdue, stale, duplicate and likely-done items; Claude checks them "
+    + "(read-only) and asks one question each in the Review panel. 1–3 minutes.";
+  sb.after(rb);
   const panel = document.createElement("div");
   panel.className = "box info upd"; panel.hidden = true;
   $(".top").after(panel);
   function showUpd(j) {
     const fin = j.status === "done" || j.status === "error";
-    ub.disabled = !!j.id && !fin;
+    ub.disabled = sb.disabled = rb.disabled = !!j.id && !fin;
     panel.hidden = !j.id;
     if (!j.id) return;
     panel.dataset.state = j.status;
     if (!fin) {
-      panel.innerHTML = '<h2><span class="spin"></span>Refreshing from disk/git (pull, collect, stubs)</h2>';
+      panel.innerHTML = j.review
+        ? '<h2><span class="spin"></span>☑ Building your weekly review with Claude (1–3 min; keep working)</h2>'
+        : !j.smart
+        ? '<h2><span class="spin"></span>Refreshing from disk/git (pull, collect, stubs)</h2>'
+        : j.phase === "claude"
+        ? '<h2><span class="spin"></span>✦ Reading your mail and calendar with Claude (1–3 min; keep working)</h2>'
+        : '<h2><span class="spin"></span>✦ Smart update: refreshing tasks, then Claude reads mail and calendar</h2>';
       return;
     }
     if (j.status === "done" && !j.summary) { panel.hidden = true; return; }  // nothing to report
@@ -2569,10 +2664,19 @@ LIVE_JS = r"""<div class="toasts"></div>
       await sleep(3000);
       const j = await (await fetch("/update")).json();
       if (j.status === "done" || j.status === "error") { location.reload(); return; }
+      showUpd(j);
     }
   }
   ub.onclick = async () => {
     try { const r = await post("/update", {}); showUpd({id: r.job, status: "running"}); pollUpd(); }
+    catch (e) { toast("Can't update: " + e.message); }
+  };
+  rb.onclick = async () => {
+    try { const r = await post("/update", {review: true}); showUpd({id: r.job, status: "running", review: true}); pollUpd(); }
+    catch (e) { toast("Can't start the review: " + e.message); }
+  };
+  sb.onclick = async () => {
+    try { const r = await post("/update", {smart: true}); showUpd({id: r.job, status: "running", smart: true}); pollUpd(); }
     catch (e) { toast("Can't update: " + e.message); }
   };
   // ---- Proposed by the last Update: confirm candidate tasks (＋ Add) and likely-done tasks (☑ Done)
@@ -2591,7 +2695,8 @@ LIVE_JS = r"""<div class="toasts"></div>
     const add = (title, items) => { if (!items.length) return; const h = document.createElement("h3"); h.textContent = title;
       const ul = document.createElement("ul"); ul.append(...items); prop.append(h, ul); };
     add("Add as task?", p.candidates.map(c => li(
-      `<span class="pt" dir="auto">${mdi(c.text)}${c.due ? ` <span class="why">📅 ${esc(c.due)}</span>` : ""}</span>`,
+      `<span class="pt" dir="auto">${mdi(c.text)}${c.due ? ` <span class="why">📅 ${esc(c.due)}</span>` : ""}`
+        + `${c.why ? ` <span class="why">— ${mdi(c.why)}</span>` : ""}</span>`,
       [["＋ Add", async () => { const j = await post("/add", c); toast(j.label, j.commit); }],
        ["×", dismiss(c.text)]])));
     add("Done already?", p.likely_done.map(d => li(
@@ -2778,6 +2883,175 @@ def note_create(vault: Path, key: str, name: str) -> dict:
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(f"# {name}\n\n")
     return note_read(vault, key, name)
+
+
+CONFLICT_RE = re.compile(r"^(?P<base>.+)\.conflict-\d{8}-\d{6}$")
+
+
+def _conflict_pair(vault: Path, key: str, name: str) -> tuple[Path, Path, str]:
+    m = CONFLICT_RE.match(name or "")
+    if not m:
+        raise NotesPathError("not a conflict copy")
+    copy, base = note_file(vault, key, name), note_file(vault, key, m.group("base"))
+    if not copy.is_file():
+        raise LookupError("conflict copy not found")
+    return base, copy, m.group("base")
+
+
+def conflict_diff(vault: Path, key: str, name: str, context: int = 3) -> dict:
+    """Line diff between a note (a) and its conflict copy (b), as hunks for the UI:
+    [{"lines": [["=", text] | ["-", only in the note] | ["+", only in the copy] | ["…", n hidden]]}]."""
+    base, copy, base_name = _conflict_pair(vault, key, name)
+    a = base.read_text().split("\n") if base.is_file() else []
+    b = copy.read_text().split("\n")
+    sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
+    hunks = []
+    for group in sm.get_grouped_opcodes(context):
+        lines = []
+        for tag, i1, i2, j1, j2 in group:
+            if tag == "equal":
+                lines += [["=", x] for x in a[i1:i2]]
+            if tag in ("replace", "delete"):
+                lines += [["-", x] for x in a[i1:i2]]
+            if tag in ("replace", "insert"):
+                lines += [["+", x] for x in b[j1:j2]]
+        hunks.append({"a": group[0][1] + 1, "b": group[0][3] + 1, "lines": lines})
+    only_copy = sum(j2 - j1 for t, _, _, j1, j2 in sm.get_opcodes() if t in ("replace", "insert"))
+    only_note = sum(i2 - i1 for t, i1, i2, _, _ in sm.get_opcodes() if t in ("replace", "delete"))
+    _, plan, *_ = _merge_plan(vault, key, name)
+    return {"key": key, "copy": name, "note": base_name, "note_exists": base.is_file(),
+            "only_in_copy": only_copy, "only_in_note": only_note, "hunks": hunks, "plan": plan}
+
+
+def union_merge(a: str, b: str) -> str:
+    """Keep every line of the note (a) and add the copy's (b) extra lines where they belong:
+    after the note's version of a changed block, or at an insertion point. Never removes text."""
+    al, bl = a.split("\n"), b.split("\n")
+    out = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, al, bl, autojunk=False).get_opcodes():
+        out += al[i1:i2]
+        if tag in ("replace", "insert"):
+            extra = [x for x in bl[j1:j2]]
+            while extra and not extra[0].strip() and out and not out[-1].strip():
+                extra.pop(0)
+            out += extra
+    return "\n".join(out)
+
+
+ENTRY_DATE_RE = re.compile(r"^##\s+([A-Z][a-z]{2})[a-z]*\.?\s+(\d{1,2}),\s+(\d{4})")
+
+
+def _entries(text: str) -> tuple[list[str], list[dict]]:
+    """Split a lab-notebook note into its preamble and its dated "## " entries.
+    Each entry: {"head", "key" (heading + occurrence), "lines", "date" (or None)}."""
+    lines = text.split("\n")
+    starts = [i for i, l in enumerate(lines) if l.startswith("## ")]
+    pre = lines[:starts[0]] if starts else lines
+    seen: dict[str, int] = {}
+    out = []
+    for n, i in enumerate(starts):
+        j = starts[n + 1] if n + 1 < len(starts) else len(lines)
+        head = lines[i].strip()
+        seen[head] = seen.get(head, 0) + 1
+        date = None
+        if (m := ENTRY_DATE_RE.match(head)):
+            try:
+                date = dt.datetime.strptime(" ".join(m.groups()), "%b %d %Y").date()
+            except ValueError:
+                pass
+        out.append({"head": head, "key": f"{head}#{seen[head]}", "lines": lines[i:j], "date": date})
+    return pre, out
+
+
+def _norm(lines: list[str]) -> list[str]:
+    out = [l.rstrip() for l in lines]
+    while out and not out[-1]:
+        out.pop()
+    return out
+
+
+def notebook_merge(note: str, copy: str, note_newer: bool) -> tuple[str, dict]:
+    """Merge a conflict copy into a progress note entry by entry (not line by line).
+    - entries only in the copy are added, placed by their date (newest first);
+    - identical entries are left alone;
+    - an entry that differs: the note's version wins when the note was edited after the
+      conflict (note_newer); otherwise the copy's extra lines are added inside that entry.
+    Notes without "## " entries fall back to a line union. Returns (text, plan)."""
+    pre, ents = _entries(note)
+    _, cents = _entries(copy)
+    plan = {"added": [], "kept_note": [], "combined": [], "same": 0}
+    if not ents and not cents:
+        merged = union_merge(note, copy)
+        return merged, {**plan, "combined": ["(whole note)"] if merged != note else []}
+    by_key = {e["key"]: e for e in ents}
+    for c in cents:
+        e = by_key.get(c["key"])
+        if e is None:
+            # place by date: before the first entry that is older; undated entries go on top
+            pos = next((k for k, x in enumerate(ents) if c["date"] and x["date"] and x["date"] < c["date"]), None)
+            if c["date"] is None:
+                pos = 0
+            block = dict(c, lines=_norm(c["lines"]) + [""])
+            ents.insert(len(ents) if pos is None else pos, block)
+            by_key[c["key"]] = block
+            plan["added"].append(c["head"])
+        elif _norm(e["lines"]) == _norm(c["lines"]):
+            plan["same"] += 1
+        elif note_newer:
+            plan["kept_note"].append(c["head"])
+        else:
+            merged = union_merge("\n".join(_norm(e["lines"])), "\n".join(_norm(c["lines"])))
+            e["lines"] = merged.split("\n") + [""]
+            plan["combined"].append(c["head"])
+    out = list(pre)
+    for e in ents:
+        if out and out[-1].strip() and e["lines"] and e["lines"][0].startswith("## "):
+            out.append("")
+        out += e["lines"]
+    text = "\n".join(out)
+    if not text.endswith("\n") and note.endswith("\n"):
+        text += "\n"
+    return text, plan
+
+
+def _note_edited_since(vault: Path, rel: str, since: dt.datetime, slack_s: int = 120) -> bool:
+    """True when the note has unsynced edits, or a commit later than `since` (+ slack: the
+    conflict resolution itself commits at that moment)."""
+    root = notes_root(vault)
+    if git(root, "status", "--porcelain", "--", rel).stdout.strip():
+        return True
+    last = git(root, "log", "-1", "--format=%ct", "--", rel).stdout.strip()
+    return bool(last) and int(last) > since.timestamp() + slack_s
+
+
+def _merge_plan(vault: Path, key: str, name: str) -> tuple[str, dict, Path, Path, str]:
+    base, copy, base_name = _conflict_pair(vault, key, name)
+    a = base.read_text() if base.is_file() else ""
+    b = copy.read_text()
+    when = dt.datetime.strptime(name.rsplit(".conflict-", 1)[1], "%Y%m%d-%H%M%S")
+    newer = bool(a) and _note_edited_since(vault, base.relative_to(notes_root(vault)).as_posix(), when)
+    text, plan = notebook_merge(a, b, newer) if a else (b, {"added": ["(whole note)"], "kept_note": [],
+                                                            "combined": [], "same": 0})
+    plan["note_newer"] = newer
+    return text, plan, base, copy, base_name
+
+
+def conflict_resolve(vault: Path, key: str, name: str, how: str) -> dict:
+    """how = "merge": add the copy's extra lines into the note, then delete the copy;
+    how = "discard": delete the copy. Either way it is one commit at the next sync
+    (the copy stays in git history)."""
+    if how not in ("merge", "discard"):
+        raise ValueError("how must be merge or discard")
+    notes_repo(vault)
+    with _lock:
+        base, copy, base_name = _conflict_pair(vault, key, name)
+        plan = {}
+        if how == "merge":
+            text, plan, base, copy, base_name = _merge_plan(vault, key, name)
+            if not base.is_file() or text != base.read_text():
+                base.write_text(text)
+        copy.unlink()
+    return {"ok": True, "note": base_name, "plan": plan}
 
 
 def note_rename(vault: Path, key: str, name: str, new: str) -> dict:
@@ -3551,7 +3825,7 @@ def run_job(vault: Path, job: dict) -> None:
     if not bin_path:
         job.update(status="error",
                    summary="Claude CLI not installed; use deterministic controls "
-                           "(done / due / snooze / move) or ask in the Cursor Project.",
+                           "(done / due / snooze / move) or ask your coding agent.",
                    anchor=job.get("tid"), commit=None, question=False)
         return
     cmd = [bin_path, "-p", "--output-format", "json",
@@ -3596,8 +3870,9 @@ def claude_bin() -> str | None:
     return shutil.which("claude")
 
 
-def run_update(vault: Path, job: dict) -> None:
-    """Refresh from disk/git: pull, ids, collect, minimal stubs, render. No LLM / no Claude."""
+def run_update(vault: Path, job: dict, final: bool = True) -> None:
+    """Refresh from disk/git: pull, ids, collect, minimal stubs, render. No LLM / no Claude.
+    final=False (✦ Smart update) leaves the job running for the Claude pass that follows."""
     job["status"] = "running"
     cache = Path(job["cache"])
     with _lock:
@@ -3627,15 +3902,291 @@ def run_update(vault: Path, job: dict) -> None:
         if warn:
             bits.append(f"- ({warn})")
         summary = "\n".join(bits)
-    job.update(status="done", commit=sha, finished=time.strftime("%H:%M"),
+    job.update(status="done" if final else "running", commit=sha, finished=time.strftime("%H:%M"),
                summary=summary[:3000])
 
 
-def start_update(cache: Path) -> str:
+# ---------------------------------------------------------------- smart update (Claude)
+# ✦ Smart update = the plain Update, then ONE read-only Claude run that fills what needs
+# judgment: today's headline, the calendar (Google Calendar), emails that need a reply
+# (Gmail) and proposals (candidate tasks from inbox notes / mail, likely-done tasks).
+# Claude only READS (vault files, mail, calendar) and replies with JSON; the dashboard
+# validates it and writes stubs.json / proposals.json itself. It runs outside the vault
+# lock, so task clicks never wait for it. Connectors: the claude.ai Gmail and Google
+# Calendar connectors of the logged-in Claude Code account (`claude mcp list`).
+SMART_TIMEOUT = 600
+SMART_TOOLS = [
+    "mcp__claude_ai_Gmail__search_threads", "mcp__claude_ai_Gmail__get_thread",
+    "mcp__claude_ai_Gmail__get_message", "mcp__claude_ai_Gmail__list_labels",
+    "mcp__claude_ai_Google_Calendar__list_events", "mcp__claude_ai_Google_Calendar__list_calendars",
+    "mcp__claude_ai_Google_Calendar__get_event", "mcp__claude_ai_Google_Calendar__search_events",
+]
+SMART_PROMPT = """You prepare the user's task dashboard for today, {today} ({weekday}). You may only READ:
+files in the current directory (the user's task vault), Gmail and Google Calendar. Never send, draft,
+label, create or change anything. Reply with ONE JSON object and nothing else.
+
+Read first: `{cache}/data.json` (all open tasks, projects with repo activity, inbox notes), the open
+inbox notes in `inbox/` (not `inbox/processed/`), and `memory/me.md` if present. Categories (labels):
+{categories}. Task lines look like `- [ ] [Label] text ➕ date 🆔 abc123 📅 due`.
+
+Fill these keys (use null for a key whose source failed, so the old value is kept):
+- "headline": one sentence, at most 25 words: what matters most today (deadlines, meetings, urgent
+  tasks). Name relative times ("tonight", "tomorrow") only for today's date.
+- "calendar": events from Google Calendar for today plus the next 2 days that have events (skip
+  empty weekend days), all calendars the user owns. Items:
+  {{"date": "YYYY-MM-DD", "start": "HH:MM", "end": "HH:MM", "title": "...", "color": "<Google colorId
+  1-11, optional>", "domain": "<a label, only when clear>"}}, all-day events
+  {{"date": "...", "title": "...", "all_day": true}}. Local times.
+- "emails": up to 6 Gmail threads that need the user's reply. Search
+  `in:inbox newer_than:7d -category:promotions -category:social -category:updates -category:forums`
+  (max 25), keep threads written to the user personally whose last message is not from them. Skip
+  mailing lists, notifications, newsletters, announcements and requests whose date has passed. Before
+  keeping one, check the user's sent mail (`from:me` plus the sender or keywords): if they already
+  replied or settled it, skip it. Items: {{"text": "Sender: why it needs a reply (one line)",
+  "domain": "<label, when clear>"}}.
+- "candidates": up to 8 tasks worth adding that are NOT already open tasks: from inbox notes and from
+  the emails above that ask for an action. Items: {{"text": "[Label] imperative, specific task",
+  "project": "<project slug from data.json, optional>", "due": "YYYY-MM-DD, optional",
+  "why": "short source, e.g. inbox note 2026-11-20 or email from X",
+  "source": "gmail:<threadId> of that email, or the inbox note's path (inbox/...md)"}}.
+- "likely_done": open tasks (they must have a 🆔) that the evidence says are done: a merged PR or
+  commit in data.json, a later inbox note, or a sent email. Items: {{"id": "<6-hex 🆔>",
+  "why": "short evidence"}}. Only with real evidence.
+- "notes": markdown bullets, at most 80 words, ONLY for things the user must know (a connector that
+  failed, an inbox note you could not place). Empty string if nothing.
+
+Follow memory/me.md for language and tone. Each string starts with a letter of its own language."""
+
+
+def _extract_json(text: str) -> dict:
+    """The first JSON object in a reply (tolerates ```json fences and text around it)."""
+    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S)
+    raw = m.group(1) if m else text[text.find("{"): text.rfind("}") + 1]
+    obj = json.loads(raw)
+    if not isinstance(obj, dict):
+        raise ValueError("reply is not a JSON object")
+    return obj
+
+
+def clean_smart(obj: dict) -> dict:
+    """Validate Claude's reply; drop anything malformed. Keys set to None mean 'keep the old value'."""
+    s = lambda v, n: re.sub(r"\s+", " ", str(v)).strip()[:n] if v is not None else ""
+    date_ok = lambda d: bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(d or "")))
+    time_ok = lambda t: bool(re.fullmatch(r"\d{1,2}:\d{2}", str(t or "")))
+    dom = lambda d: normalize_domain(d) if d and normalize_domain(d) in DOMAIN_ORDER else None
+    out: dict = {}
+    if isinstance(obj.get("headline"), str) and obj["headline"].strip():
+        out["headline"] = s(obj["headline"], 240)
+    if isinstance(obj.get("calendar"), list):
+        cal = []
+        for e in obj["calendar"][:40]:
+            if not isinstance(e, dict) or not date_ok(e.get("date")) or not e.get("title"):
+                continue
+            x = {"date": e["date"], "title": s(e["title"], 120)}
+            if e.get("all_day"):
+                x["all_day"] = True
+            elif time_ok(e.get("start")):
+                x["start"] = e["start"]
+                if time_ok(e.get("end")):
+                    x["end"] = e["end"]
+            else:
+                x["all_day"] = True
+            if re.fullmatch(r"\d{1,2}|#[0-9a-fA-F]{6}", str(e.get("color") or "")):
+                x["color"] = str(e["color"])
+            if dom(e.get("domain")):
+                x["domain"] = dom(e.get("domain"))
+            cal.append(x)
+        out["calendar"] = cal
+    if isinstance(obj.get("emails"), list):
+        out["emails"] = [{"text": s(e["text"], 200), **({"domain": dom(e.get("domain"))} if dom(e.get("domain")) else {})}
+                         for e in obj["emails"][:6] if isinstance(e, dict) and e.get("text")]
+    if isinstance(obj.get("candidates"), list):
+        out["candidates"] = [{"text": s(c["text"], 200),
+                              **({"project": s(c["project"], 60)} if re.fullmatch(r"[\w-]+", str(c.get("project") or "")) else {}),
+                              **({"due": c["due"]} if date_ok(c.get("due")) else {}),
+                              **({"why": s(c["why"], 120)} if c.get("why") else {}),
+                              **({"source": str(c["source"])} if cite_info(str(c.get("source") or ""))["kind"]
+                                 in ("gmail", "note", "url", "sheet", "doc", "drive") else {})}
+                             for c in obj["candidates"][:8] if isinstance(c, dict) and c.get("text")]
+    if isinstance(obj.get("likely_done"), list):
+        out["likely_done"] = [{"id": str(x["id"]).lower(), "why": s(x.get("why"), 160)}
+                              for x in obj["likely_done"][:12]
+                              if isinstance(x, dict) and re.fullmatch(r"[0-9a-fA-F]{6}", str(x.get("id") or ""))]
+    out["notes"] = str(obj.get("notes") or "").strip()[:1200]
+    return out
+
+
+def run_smart(vault: Path, job: dict) -> None:
+    """Plain Update first (pull, ids, collect, render), then the read-only Claude pass."""
+    job["phase"] = "refresh"
+    run_update(vault, job, final=False)
+    base_summary, cache = job.get("summary", ""), Path(job["cache"])
+    bin_path = claude_bin()
+    if not bin_path:
+        job.update(status="error", summary="Claude CLI not installed: ✦ Smart update needs `claude` "
+                   "(Claude Code) logged in with the Gmail and Google Calendar connectors.")
+        return
+    job.update(status="running", phase="claude")
+    prompt = SMART_PROMPT.format(today=dt.date.today().isoformat(), weekday=dt.date.today().strftime("%A"),
+                                 cache=cache, categories=", ".join(DOMAIN_ORDER))
+    cmd = [bin_path, "-p", "--output-format", "json", "--model", AGENT_MODEL, "--tools", "Read,Glob,Grep",
+           "--allowedTools", *SMART_TOOLS]
+    try:
+        r = subprocess.run(cmd, input=prompt, cwd=vault, capture_output=True, text=True, timeout=SMART_TIMEOUT)
+        out = json.loads(r.stdout) if r.stdout.strip().startswith("{") else {}
+        reply = (out.get("result") or "").strip()
+        if r.returncode != 0 or out.get("is_error") or not reply:
+            raise RuntimeError((reply or r.stderr or r.stdout or "no output").strip()[:400])
+        got = clean_smart(_extract_json(reply))
+    except subprocess.TimeoutExpired:
+        job.update(status="error", summary=f"✦ Smart update timed out after {SMART_TIMEOUT} s.\n\n{base_summary}")
+        return
+    except (RuntimeError, ValueError, json.JSONDecodeError) as e:
+        job.update(status="error", summary=f"✦ Smart update failed: {e}\n\n{base_summary}")
+        return
+    with _lock:
+        path = cache / "stubs.json"
+        stubs = json.loads(path.read_text()) if path.exists() else {}
+        for k in ("headline", "calendar", "emails"):
+            if k in got:
+                stubs[k] = got[k]
+        stubs["smart_at"] = dt.datetime.now().isoformat(timespec="minutes")
+        path.write_text(json.dumps(stubs, ensure_ascii=False, indent=1))
+        prev = {}
+        if (cache / "proposals.json").exists():
+            try:
+                prev = json.loads((cache / "proposals.json").read_text())
+            except json.JSONDecodeError:
+                prev = {}
+        props = {"candidates": got.get("candidates", prev.get("candidates") or []),
+                 "likely_done": got.get("likely_done", prev.get("likely_done") or [])}
+        (cache / "proposals.json").write_text(json.dumps(props, ensure_ascii=False, indent=1))
+        data = json.loads((cache / "data.json").read_text())
+        (cache / "index.html").write_text(render(data, stubs))
+    bits = [f"**✦ Smart update**: {len(got.get('emails') or [])} emails to answer, "
+            f"{len(got.get('calendar') or [])} calendar events, {len(props['candidates'])} proposed tasks, "
+            f"{len(props['likely_done'])} likely done."]
+    if got.get("notes"):
+        bits.append(got["notes"])
+    job.update(status="done", phase="", finished=time.strftime("%H:%M"), summary="\n\n".join(bits))
+
+
+# ---------------------------------------------------------------- weekly review (Claude)
+# ☑ Review = add ids, `collect --review` (overdue, untouched 30+ days, duplicates, old next
+# steps, quiet projects, old PRs, claude/* branches), then ONE read-only Claude run that
+# checks the candidates against the evidence and phrases one question per item (the
+# `review` skill's steps 2-3). The dashboard validates the reply and writes review.json,
+# which the Review panel shows; answers there change the vault (one commit each, Undo).
+REVIEW_TIMEOUT = 600
+REVIEW_PROMPT = """You prepare the user's weekly review of their task vault (the current directory). Today is {today}.
+You may only READ files here and the calendar. Never change anything. Reply with ONE JSON object and nothing else.
+
+`{cache}/data.json` → "review_candidates" ({n} items): each has kind (task, next_step, project, pr,
+branch), src, text, why (reasons) and, for tasks, "task" (its 🆔). data.json also has every project's
+repo activity ("activity": commits, merged PRs) and all open tasks. Follow `{skills}/review/SKILL.md`
+steps 2 and 3 to judge them:
+- Likely done? Look for evidence: merged PRs or commits in data.json, later inbox notes
+  (`inbox/processed/`), later sections of the project file, a calendar meeting that already happened.
+  Cite it.
+- Duplicates the collector missed (same thing in other words in another list).
+- Drop candidates that need no question (e.g. a recent, explicit Waiting On).
+- At most 15 items, ordered: likely done (with evidence), overdue, duplicates, untouched tasks, old
+  next steps, quiet projects, PRs and branches.
+- One question per item, answerable with one click; lead with the fact that makes it worth asking.
+
+Reply: {{"items": [
+  {{"task": "<6-hex 🆔 of an open task>", "q": "question", "why": "short reason / evidence"}},
+  {{"src": "<vault-relative file the item is about>", "project": "<slug, optional>", "q": "question",
+    "why": "short reason", "answers": ["2-3 short button labels, e.g. Deleted", "Not yet"]}}
+]}}
+Task items get Done / Still open / Drop / Snooze buttons automatically: don't add answers to them.
+Follow memory/me.md for language; each string starts with a letter of its own language."""
+
+
+def clean_review(obj: dict, vault: Path) -> list[dict]:
+    """Validate Claude's review items: task items must name an open task, other items an existing vault file."""
+    open_ids = {t["id"] for t in open_tasks(vault) if t.get("id")}
+    s = lambda v, n: re.sub(r"\s+", " ", str(v or "")).strip()[:n]
+    out = []
+    for it in (obj.get("items") or [])[:15]:
+        if not isinstance(it, dict) or not s(it.get("q"), 300):
+            continue
+        item = {"id": f"r{len(out) + 1}", "q": s(it["q"], 300)}
+        if it.get("why"):
+            item["why"] = s(it["why"], 160)
+        tid = str(it.get("task") or "").lower()
+        src = str(it.get("src") or "")
+        if tid in open_ids:
+            item["task"] = tid
+        elif src and SRC_RE.match(src) and (vault / src).is_file():
+            item["src"] = src
+            if re.fullmatch(r"[\w-]+", str(it.get("project") or "")):
+                item["project"] = it["project"]
+            answers = [s(a, 24) for a in (it.get("answers") or []) if s(a, 24)][:3]
+            item["answers"] = answers if len(answers) >= 2 else ["Done", "Not yet"]
+        else:
+            continue
+        out.append(item)
+    return out
+
+
+def run_review(vault: Path, job: dict) -> None:
+    job.update(status="running", phase="collect")
+    cache, today = Path(job["cache"]), dt.date.today().isoformat()
+    with _lock:
+        pull(vault, force=True)
+        before = dirty(vault)
+        add_ids(vault)
+        data = collect(vault, review=True)
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / "data.json").write_text(json.dumps(data, ensure_ascii=False, indent=1))
+        changed = [p for p, h in dirty(vault).items() if before.get(p) != h]
+        sha, warn = commit_push(vault, changed, f"ids: {today}") if changed else (None, "")
+    cands = data.get("review_candidates") or []
+    if not cands:
+        (cache / "review.json").write_text(json.dumps({"generated": today, "items": []}, indent=1))
+        job.update(status="done", phase="", commit=sha, finished=time.strftime("%H:%M"),
+                   summary="**☑ Weekly review**: nothing stale, overdue or duplicated. Nice.")
+        return
+    bin_path = claude_bin()
+    if not bin_path:
+        job.update(status="error", summary="Claude CLI not installed: ☑ Review needs `claude` (Claude Code).")
+        return
+    job["phase"] = "claude"
+    prompt = REVIEW_PROMPT.format(today=today, cache=cache, n=len(cands),
+                                  skills=Path(__file__).resolve().parent.parent)
+    cmd = [bin_path, "-p", "--output-format", "json", "--model", AGENT_MODEL, "--tools", "Read,Glob,Grep",
+           "--add-dir", str(Path(__file__).resolve().parent.parent),
+           "--allowedTools", *[t for t in SMART_TOOLS if "Calendar" in t]]
+    try:
+        r = subprocess.run(cmd, input=prompt, cwd=vault, capture_output=True, text=True, timeout=REVIEW_TIMEOUT)
+        out = json.loads(r.stdout) if r.stdout.strip().startswith("{") else {}
+        reply = (out.get("result") or "").strip()
+        if r.returncode != 0 or out.get("is_error") or not reply:
+            raise RuntimeError((reply or r.stderr or r.stdout or "no output").strip()[:400])
+        items = clean_review(_extract_json(reply), vault)
+    except subprocess.TimeoutExpired:
+        job.update(status="error", summary=f"☑ Review timed out after {REVIEW_TIMEOUT} s.")
+        return
+    except (RuntimeError, ValueError, json.JSONDecodeError) as e:
+        job.update(status="error", summary=f"☑ Review failed: {e}")
+        return
+    with _review_lock:
+        (cache / "review.json").write_text(json.dumps({"generated": today, "items": items},
+                                                      ensure_ascii=False, indent=1))
+    top = "\n".join(f"- {it['q']}" for it in items[:3])
+    job.update(status="done", phase="", commit=sha, finished=time.strftime("%H:%M"),
+               summary=f"**☑ Weekly review**: {len(items)} questions from {len(cands)} candidates "
+                       f"(answer them in the Review panel).\n\n{top}" + (f"\n({warn})" if warn else ""))
+
+
+def start_update(cache: Path, smart: bool = False, review: bool = False) -> str:
     if any(j.get("kind") == "update" and j["status"] in ("queued", "running") for j in _jobs.values()):
         raise LookupError("an update is already running")
     jid = uuid.uuid4().hex[:12]
-    _jobs[jid] = {"id": jid, "kind": "update", "cache": cache, "text": "Update", "status": "queued", "summary": "",
+    _jobs[jid] = {"id": jid, "kind": "update", "smart": smart, "review": review, "phase": "", "cache": cache,
+                  "text": "Weekly review" if review else "Smart update" if smart else "Update",
+                  "status": "queued", "summary": "",
                   "commit": None, "anchor": None, "question": False, "tid": "", "box": "", "dismissed": False,
                   "created": time.time(), "finished": ""}
     _queue.put(jid)
@@ -3646,14 +4197,17 @@ def last_update() -> dict:
     ups = [j for j in _jobs.values() if j.get("kind") == "update" and not j["dismissed"]
            and time.time() - j["created"] < JOB_TTL]
     j = max(ups, key=lambda j: j["created"], default=None)
-    return {k: j[k] for k in ("id", "status", "summary", "commit", "finished")} if j else {}
+    return {k: j.get(k) for k in ("id", "status", "summary", "commit", "finished", "smart", "review", "phase")} if j else {}
 
 
 def worker(vault: Path) -> None:
     while True:
         job = _jobs[_queue.get()]
         try:
-            (run_update if job.get("kind") == "update" else run_job)(vault, job)
+            if job.get("kind") == "update":
+                (run_review if job.get("review") else run_smart if job.get("smart") else run_update)(vault, job)
+            else:
+                run_job(vault, job)
         except Exception as e:
             job.update(status="error", summary=f"{type(e).__name__}: {e}", anchor=job["tid"])
 
@@ -3749,7 +4303,8 @@ def proposals(vault: Path, cache: Path) -> dict:
         t = open_by_id.get(str(x.get("id", "")))
         if t:
             done.append({"id": t["id"], "src": t["source"], "text": t["text"], "why": str(x.get("why", ""))})
-    cands = [{"text": str(c["text"]), "project": str(c.get("project") or ""), "due": str(c.get("due") or "")}
+    cands = [{"text": str(c["text"]), "project": str(c.get("project") or ""), "due": str(c.get("due") or ""),
+              "why": str(c.get("why") or ""), "source": str(c.get("source") or "")}
              for c in p.get("candidates") or [] if isinstance(c, dict) and c.get("text")]
     return {"candidates": cands, "likely_done": done}
 
@@ -3825,8 +4380,9 @@ def _insert_lines_in_section(lines: list[str], section: str, new_lines: list[str
 
 def add_task(vault: Path, text: str = "", project: str = "", due: str = "",
              src: str = "", domain: str = "", section: str = "Active",
-             texts: list[str] | None = None, urgency: str = "") -> dict:
+             texts: list[str] | None = None, urgency: str = "", source: str = "") -> dict:
     """Append one or more open tasks to a list's TASKS.md. One commit.
+    `source`: optional 🔗 citation (see cite_info) stamped on every added line.
 
     `text` may be a Keep-style paste (markdown list / multiple lines); it is
     split with split_task_lines unless `texts` is provided. Target file comes
@@ -3853,6 +4409,9 @@ def add_task(vault: Path, text: str = "", project: str = "", due: str = "",
     if proj and not re.fullmatch(r"[\w-]+", proj):
         proj = ""
     stamp_due = due or (urgency_due_date(urgency) if urgency else "")
+    source = (source or "").strip()
+    if source and (not re.fullmatch(r"\S{3,400}", source) or cite_info(source)["kind"] == "unknown"):
+        raise ValueError(f"bad source {source!r}")
     with _lock:
         pull(vault, force=True)
         rel, tag_dom = resolve_add_src(vault, src=src, domain=domain, project=proj)
@@ -3878,6 +4437,7 @@ def add_task(vault: Path, text: str = "", project: str = "", due: str = "",
                 body = f"[{tag_dom}] {body}"
             line = (f"- [ ] {body}"
                     + (f" → `memory/projects/{link_proj}.md`" if link_proj else "")
+                    + (f" 🔗 {source}" if source else "")
                     + (f" 📅 {stamp_due}" if stamp_due else "")
                     + f" ➕ {today} 🆔 {tid}")
             new_lines.append(line)
@@ -3916,7 +4476,15 @@ def provenance(vault: Path, src: str, tid: str) -> dict:
     sha = blame[0].split()[0] if blame else ""
     last = git(vault, "log", "-1", "--format=%H|%cs|%s", sha, "--").stdout.strip() if sha.strip("0") else ""
     notes = git(vault, "grep", "-l", "-F", needle[:30], "--", "inbox").stdout.splitlines()
-    return {"added": parse_task(raw, src)["added"], "first": commit(first[0] if first else ""),
+    cites = []
+    for ref in CITE_RE.findall(raw):
+        c = cite_info(ref, base)
+        if c["kind"] == "note" and (vault / c["path"]).is_file():
+            body = (vault / c["path"]).read_text(errors="replace")
+            body = re.sub(r"\A---\n.*?\n---\n", "", body, flags=re.S)
+            c["quote"] = body.strip()[:1200]
+        cites.append(c)
+    return {"cites": cites, "added": parse_task(raw, src)["added"], "first": commit(first[0] if first else ""),
             "last": commit(last), "file": f"{base}/{src}#L{i + 1}",
             "notes": [{"path": n, "url": f"{base}/{n}"} for n in notes]}
 
@@ -4011,6 +4579,8 @@ class Handler(BaseHTTPRequestHandler):
                                        "repo_ok": (root / ".git").exists(), "brand": DASHBOARD_BRAND})
             if path == "/notes/api/note":
                 return self.send(200, note_read(vault, q.get("key", ""), q.get("name", "")))
+            if path == "/notes/api/conflict":
+                return self.send(200, conflict_diff(vault, q.get("key", ""), q.get("name", "")))
             if path == "/notes/api/tasks":
                 return self.send(200, {"tasks": notes_tasks(vault, q.get("key", ""))})
             if path == "/notes/file":
@@ -4038,6 +4608,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, note_save(vault, str(req["key"]), str(req["name"]), req["text"], req.get("base")))
         if path == "/notes/api/create":
             return self.send(200, note_create(vault, str(req["key"]), str(req["name"]).strip()))
+        if path == "/notes/api/conflict/resolve":
+            return self.send(200, conflict_resolve(vault, str(req["key"]), str(req["name"]), str(req["how"])))
         if path == "/notes/api/rename":
             return self.send(200, note_rename(vault, str(req["key"]), str(req["name"]), str(req["new"]).strip()))
         if path == "/notes/api/sync":
@@ -4115,6 +4687,7 @@ class Handler(BaseHTTPRequestHandler):
                     section=str(req.get("section", "") or "Active"),
                     texts=texts,
                     urgency=str(req.get("urgency", "")),
+                    source=str(req.get("source", "") or ""),
                 )
                 drop_proposal(self.server.cache, str(req.get("text") or (res.get("text") or "")))
             elif self.path == "/proposal/dismiss":
@@ -4134,7 +4707,8 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == "/ask":
                 res = {"job": new_job(vault, self.server.cache, req)}
             elif self.path == "/update":
-                res = {"job": start_update(self.server.cache)}
+                res = {"job": start_update(self.server.cache, smart=bool(req.get("smart")),
+                                           review=bool(req.get("review")))}
             elif self.path == "/pull":
                 with _lock:
                     pull(vault, force=True)

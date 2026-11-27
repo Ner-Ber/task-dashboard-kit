@@ -42,7 +42,10 @@ Each list has the sections `## Active`, `## Waiting On`, `## Someday`, `## Done`
 | `📅 YYYY-MM-DD` | due date: ≤ 2 days away → **Urgent**, ≤ 14 days → **On the desk**, none → **Any time** |
 | `⏳ YYYY-MM-DD` | snoozed: hidden from the Today boxes until that date |
 | `✅ YYYY-MM-DD` | date completed (on `- [x]` lines) |
+| `- [-]` + `❌ YYYY-MM-DD` | dropped (not done, no longer needed); kept under `## Done` |
 | `‼️` | high priority (optional) |
+| `🔗 <ref>` | where the task came from (optional, several allowed): `gmail:<threadId>`, `sheet:<id>[#gid=N]`, `doc:<id>`, `drive:<id>`, an `https://` URL, or a vault note path (`inbox/…md`, `memory/…md`). The dashboard turns it into a link. |
+| `👀 YYYY-MM-DD` | last confirmed still relevant (the weekly review sets it); counts as "touched" for staleness |
 
 Keep each task on one line. Don't add other emoji markers.
 
@@ -52,7 +55,8 @@ Keep each task on one line. Don't add other emoji markers.
   `TASKS.md`; else the category's; if unsure, ask. Append under `## Active` (or
   `## Waiting On` / `## Someday` if the user says so) with `➕` today and a fresh
   `🆔` (check it's not already used: search the vault for `🆔 <id>`). Add `📅` only
-  if the user gave a date ("by Friday" → that date).
+  if the user gave a date ("by Friday" → that date). If the task comes from an email,
+  document or saved note, add `🔗 <ref>` so the user can jump back to it.
 - **Complete**: change `- [ ]` to `- [x]`, append `✅` today, move the line under
   `## Done`. Find the task by its text or `🆔`; if several match, ask.
 - **Reschedule / snooze**: replace or add `📅` / `⏳`. Remove `⏳` when the user

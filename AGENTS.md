@@ -46,7 +46,10 @@ dashboard/                             generated cache (don't edit)
 | `📅 YYYY-MM-DD` | due: ≤ 2 days → Urgent, ≤ 14 days → On the desk, none → Any time |
 | `⏳ YYYY-MM-DD` | snoozed until |
 | `✅ YYYY-MM-DD` | completed (on `- [x]`) |
+| `- [-]` + `❌ YYYY-MM-DD` | dropped (not done, no longer needed); kept under `## Done` |
 | `‼️` | high priority (optional) |
+| `🔗 <ref>` | source of the task (optional, several allowed): `gmail:<threadId>`, `sheet:<id>[#gid=N]`, `doc:<id>`, `drive:<id>`, an `https://` URL, or a vault note path (`inbox/…md`, `memory/…md`) |
+| `👀 YYYY-MM-DD` | last confirmed still relevant (set by the weekly review) |
 
 **Add**: append under `## Active` of the right list with `➕` today and a new `🆔`.
 **Complete**: `- [x]`, append `✅` today, move under `## Done`.
@@ -70,7 +73,7 @@ Draft the homepage copy.
 
 `**Repo:**` links a project to its code (`owner/name`, optionally `@branch` when several
 projects share one repo). The dashboard shows those repos' commits, PRs and code TODO
-files (`*todo*.md`) on the project card.
+files (`*todo*.md`, `*todo*.txt`) on the project card.
 
 ## Progress notes
 
@@ -89,7 +92,8 @@ PROJECTS.md                             folder ↔ project ↔ code repos (gener
 - Images: save to `attachments/`, link as `![](attachments/<file>)`. The dashboard names
   pasted images `YYYY-MM-DD-HHMMSS.webp`. Math: `$…$`, `$$…$$`.
 - `*.conflict-YYYYMMDD-HHMMSS.md` is the other version of an edit conflict. Read it,
-  never write it. The user merges it and then deletes it.
+  never write it. The user resolves it in the dashboard's Notes tab (diff view, ⇄ Merge per dated
+  entry, × Discard) or by hand.
 - After editing notes, run `.notes/sync.sh` (or commit `notes: <folder>/<Note>` and push).
   Before reading, `.notes/sync.sh --pull`.
 

@@ -85,6 +85,11 @@ Try it: tick a task, add one in a list's "Add a task…" row, open **Notes**, ed
 *Website relaunch → Progress* and paste a screenshot. Every change is a git commit
 in your vault or notes repo. Press **↻ Update** to refresh GitHub activity.
 
+**Optional, with the Claude Code CLI** (`claude`, logged in, with its Gmail and Google Calendar
+connectors): **✦ Smart** adds today's headline, your calendar, emails waiting for a reply and
+proposed tasks (read-only; you accept each proposal). **☑ Review** builds a weekly review of
+stale, overdue, duplicate and likely-done tasks. Without `claude` everything else works.
+
 **Windows (WSL)**: `scripts/install-windows-shortcuts.sh` adds a "Tasks" Desktop/Start
 Menu shortcut, plus autostart on login.
 
@@ -172,6 +177,9 @@ uv run --with pytest pytest -q tests/
 
 ## Not included (possible extensions)
 
+- **Other agents for ✦ Smart / ☑ Review**: those two buttons call the `claude` CLI. Swapping
+  in another agent CLI (Codex, Gemini) would need a small adapter in `app/dashboard.py`
+  upstream. Not built yet.
 - **Chat/MCP server**: an MCP server exposing `add_task` / `list` / `complete` would let
   chat assistants use tasks without a GitHub connector. Not built yet.
 - **Phone access**: the dashboard is loopback-only by design. For a phone, put it

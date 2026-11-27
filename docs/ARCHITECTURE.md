@@ -67,6 +67,20 @@ flowchart LR
   place, then `git commit` + `git push` (one commit per action, so it can be undone).
   If a push is rejected it pulls and retries.
 - **↻ Update** pulls, gives new tasks a `🆔`, fetches GitHub activity, rebuilds the cache.
+- **✦ Smart** and **☑ Review** (optional, need the Claude Code CLI `claude`, logged in):
+  - ✦ Smart runs Update, then one **read-only** Claude pass over the vault, Gmail and Google
+    Calendar (the Claude account's Gmail/Calendar connectors). It fills today's headline,
+    the calendar, emails waiting for your reply, and proposed tasks / likely-done tasks.
+    Claude only returns JSON; the dashboard validates it and nothing is added until you
+    accept a proposal.
+  - ☑ Review finds overdue, stale (30+ days untouched), duplicate and likely-done tasks,
+    old PRs and quiet projects, and has Claude turn them into questions. Done / drop / snooze /
+    "still open" apply directly as normal task edits ("still open" stamps `👀` today);
+    free-text answers are recorded for you to act on with your agent.
+  - Without `claude` these buttons just report that it's missing; everything else works.
+    Other agents don't plug in here yet (see the README's extensions).
+- **Sources**: a task can carry `🔗 <ref>` (Gmail thread, Sheet, Doc, Drive file, URL or
+  vault note); the dashboard shows it as a link. Proposals from ✦ Smart get one automatically.
 - **Credentials**:
   - **git**: your normal SSH key or HTTPS credential for the private vault/notes repos.
     To scope it down on a shared machine, use a **deploy key** per repo (Settings → Deploy
@@ -95,14 +109,16 @@ flowchart LR
   The dashboard writes `PROJECTS.md` in the notes repo (folder ↔ name ↔ repos) on every
   notes sync, so an agent inside a code repo can find "its" notes folder.
 - **Where it shows**: the **Tasks** page shows lists and project cards (with repo
-  activity and code TODO files). The **Notes** tab shows a projects → notes tree,
+  activity and code TODO files: `*todo*.md` checklists/item blocks, or plain-text `*todo*.txt`
+  with one `# item` per line). The **Notes** tab shows a projects → notes tree,
   editor + preview, and an optional panel with that project's open tasks.
 - **Saving and sync**: the editor saves to disk 2 s after you stop typing, then commits
   in batches (after 60 s idle, on switching notes, leaving the tab, or Save/Ctrl+S),
   then pull --rebase + push. **Conflicts never lose text**: if a note changed elsewhere,
   your text stays in the note and the other version is saved beside it as
-  `<note>.conflict-<timestamp>.md`. The UI shows a red banner. `.notes/sync.sh` uses
-  the same policy on other machines.
+  `<note>.conflict-<timestamp>.md`. The UI shows a red banner with a **diff view**,
+  **⇄ Merge** (per dated entry: entries only in one version are kept, for the same date the
+  newer edit wins) and **× Discard**. `.notes/sync.sh` uses the same policy on other machines.
 - **Security**: every notes path is resolved inside its project folder: only
   `<Note>.md` and `attachments/<file>`, no `..`, absolute paths or symlinks.
 

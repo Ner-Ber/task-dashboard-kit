@@ -18,7 +18,8 @@ git-ignored `progress/` link.
 - `PROJECTS.md` — folder ↔ project name ↔ code repos. Inside a code repo, the
   `progress/` link already points at the right folder.
 - `*.conflict-YYYYMMDD-HHMMSS.md` — the other side of an edit conflict. Read it as
-  a parallel version; never write to it.
+  a parallel version; never write to it. The user resolves it in the dashboard's Notes tab
+  (diff view, ⇄ Merge: per dated entry, newer edit wins; × Discard).
 
 ## Read
 
